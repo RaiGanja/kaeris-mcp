@@ -1,0 +1,12 @@
+# Keep the build context to what the image actually needs: sources + metadata.
+# Everything below either rebuilds inside the image or has no business in it.
+dist/
+build/
+*.egg-info/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.git/
+.venv/
+venv/
+tests/

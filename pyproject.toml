@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kaeris-mcp"
+version = "0.2.2"
+description = "MCP server for KAERIS i18n — AI-native localization for Claude Desktop, Cursor & agents"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "KAERIS" }]
+keywords = ["mcp", "model-context-protocol", "i18n", "localization", "translation", "ai"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Software Development :: Localization",
+    "Topic :: Software Development :: Internationalization",
+]
+dependencies = [
+    "mcp>=1.2",
+    "kaeris>=0.2.2",
+]
+
+[project.urls]
+Homepage = "https://kaeris.dev"
+Repository = "https://github.com/RaiGanja/kaeris-mcp"
+Issues = "https://github.com/RaiGanja/kaeris-mcp/issues"
+
+[project.scripts]
+kaeris-mcp = "kaeris_mcp.server:main"
+
+[tool.setuptools]
+packages = ["kaeris_mcp"]
