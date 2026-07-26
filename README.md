@@ -1,3 +1,5 @@
+<img src="https://kaeris.dev/icon-512.png" alt="KAERIS" width="72" align="left" style="margin-right:16px" />
+
 # KAERIS i18n — MCP Server
 
 AI-native localization over the **Model Context Protocol**. Give Claude Desktop, Cursor,
