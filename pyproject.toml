@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kaeris-mcp"
-version = "0.2.3"
+version = "0.2.4"
 description = "MCP server for KAERIS i18n — AI-native localization for Claude Desktop, Cursor & agents"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -15,13 +15,17 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "License :: OSI Approved :: MIT License",
     "Topic :: Software Development :: Localization",
     "Topic :: Software Development :: Internationalization",
 ]
 dependencies = [
     "mcp>=1.2",
-    "kaeris>=0.2.4",
+    "kaeris>=0.2.5",
 ]
 
 [project.urls]
