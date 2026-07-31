@@ -25,11 +25,11 @@ audit and understand a repo's i18n before deciding what (if anything) to transla
 
 `kaeris_translate_file` with `incremental=True` keeps a `kaeris.lock` next to your source file —
 the same lock the CLI writes, so an agent and a human sharing a repo stay in sync. It records a
-hash of every source string **plus the settings that produced it**: tone, glossary, and the
+hash of every source string **plus the settings that produced it**: tone, glossary, app context, and the
 model. That means:
 
 - **Edit one string** — only that string is re-translated; everything else stays byte-for-byte.
-- **Change tone or glossary** — the whole locale is re-translated, never a mix of old and new.
+- **Change tone, glossary or context** — the whole locale is re-translated, never a mix of old and new.
 - **Change plan** — your plan picks the model (Free runs DeepSeek V3, paid runs GPT-4o-mini), so
   upgrading re-translates the locale instead of blending two models' output.
 

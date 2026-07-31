@@ -13,13 +13,45 @@ import json
 import os
 import re
 
-from mcp.server.fastmcp import FastMCP
+try:
+    from mcp.server.fastmcp import FastMCP
+except ImportError:  # MCP SDK >= 2.0 renamed FastMCP to MCPServer and moved it
+    # Same decorator/run surface (.tool(), .run(), .list_tools(), .call_tool()), so the
+    # rest of this file is version-agnostic. Without this, `pip install kaeris-mcp` in a
+    # fresh environment resolves to the newest SDK and dies on this import.
+    from mcp.server.mcpserver import MCPServer as FastMCP
 
 from kaeris.client import KaerisClient, KaerisError
 from kaeris import check as chk
 from kaeris import incremental as inc
 
-mcp = FastMCP("kaeris-i18n")
+from . import __version__
+
+SERVER_NAME = "kaeris-i18n"  # how configs and registries identify us — never rename lightly
+
+
+def _build_server():
+    """A server that tells clients which version it is.
+
+    Both SDKs report `serverInfo` in the initialize handshake and we filled in neither, so
+    Claude Desktop and every registry probe saw an empty version — no way to tell a broken
+    old install from a current one. The two SDKs carry the field differently: 2.x takes
+    `version=` on the constructor, 1.x doesn't accept it at all and holds it on the
+    low-level server underneath. Setting the attribute is enough there because the handshake
+    reads it when it builds the response, not at construction time.
+    """
+    try:
+        return FastMCP(SERVER_NAME, version=__version__)  # SDK >= 2.0
+    except TypeError:
+        pass
+    server = FastMCP(SERVER_NAME)  # SDK 1.x
+    low_level = getattr(server, "_mcp_server", None)
+    if low_level is not None:
+        low_level.version = __version__
+    return server
+
+
+mcp = _build_server()
 
 # ---------------------------------------------------------------------------
 # Shared helpers for the local (no-API) repo-aware tools: kaeris_scan_repo,
@@ -150,7 +182,11 @@ def scan_repo(path="."):
     """Pure implementation behind kaeris_scan_repo — see that tool's docstring."""
     root = path or "."
     if not os.path.isdir(root):
-        raise FileNotFoundError(root)
+        raise FileNotFoundError(
+            # The agent reading this is the one that must recover: a bare path told it
+            # nothing, so say what is wrong and what a good value looks like.
+            f"no such directory: {root} — pass an absolute path, or the repo root you want scanned"
+        )
 
     found = []
     for dirpath, name in _walk_bounded(root):
@@ -266,7 +302,9 @@ def _load_flat(path, client=None):
     by the backend /api/parse endpoint (no cost, no translation). Raises FileNotFoundError if
     the file is absent; KaerisError if the backend parse fails."""
     if not os.path.isfile(path):
-        raise FileNotFoundError(path)
+        raise FileNotFoundError(
+            f"no such file: {path} — check the path is relative to the directory the server runs in"
+        )
     if path.lower().endswith(".json"):
         obj = inc.load_json(path)
         if not isinstance(obj, dict):
@@ -463,6 +501,7 @@ def kaeris_add_language(
     tone: str = "",
     icu: bool = False,
     keep: list = None,
+    context: str = "",
     api_key: str = "",
     openrouter_key: str = "",
 ) -> dict:
@@ -483,13 +522,19 @@ def kaeris_add_language(
         icu: True if the source uses ICU MessageFormat (plurals/select), so the
              model preserves the syntax instead of translating it.
         keep: optional list of terms to NEVER translate (brand/product names).
+        context: one line about what the app IS, e.g. "a mobile bank for teenagers" or
+              "a wildlife documentary app". The model uses it to pick the right sense of
+              ambiguous strings — "Bank" becomes Ufer in the second and Bank in the first.
+              You are reading the repo, so you know this: pass it. Max 300 chars.
         api_key / openrouter_key: optional auth overrides (else free tier or env vars).
 
     Returns:
         { "written": ["<out>/<lang>.json"], "lang": "de", "languages": ["de"] }
     """
     if not os.path.isfile(source):
-        raise FileNotFoundError(source)
+        raise FileNotFoundError(
+            f"source file not found: {source} — this is the base-language file, e.g. locales/en.json"
+        )
     if not lang or not lang.strip():
         raise ValueError("`lang` is required")
 
@@ -501,7 +546,8 @@ def kaeris_add_language(
     with open(source, "rb") as f:
         content = f.read()
     try:
-        job = client.submit(fname, content, [lang], keep or [], tone=tone, icu=icu)
+        job = client.submit(fname, content, [lang], keep or [], tone=tone, icu=icu,
+                            app_context=context)
         status = client.poll(job)
         members = client.download(job)
     except KaerisError as e:
@@ -530,6 +576,7 @@ def kaeris_translate(
     tone: str = "",
     icu: bool = False,
     reuse: dict = None,
+    context: str = "",
     api_key: str = "",
     openrouter_key: str = "",
 ) -> dict:
@@ -548,6 +595,10 @@ def kaeris_translate(
         target_languages: language codes from kaeris_list_languages, e.g. ["es", "fr", "ja"].
         keep: optional list of terms to NEVER translate — kept verbatim in every language
               (brand/product names), e.g. ["KAERIS", "GitHub"].
+        context: one line about what the app IS, e.g. "a mobile bank for teenagers" or
+              "a wildlife documentary app". The model uses it to pick the right sense of
+              ambiguous strings — "Bank" becomes Ufer in the second and Bank in the first.
+              You are reading the repo, so you know this: pass it. Max 300 chars.
         verify: back-translate each result into back_lang to confirm meaning (uses more tokens).
         back_lang: language for the verify back-translation (default "en").
         tone: "formal" or "casual" to steer register; "" (default) is neutral.
@@ -577,7 +628,7 @@ def kaeris_translate(
     try:
         job = client.submit("strings.json", content, target_languages, keep or [],
                             verify=verify, back_lang=back_lang,
-                            tone=tone, icu=icu, reuse=reuse)
+                            tone=tone, icu=icu, reuse=reuse, app_context=context)
         status = client.poll(job)
         members = client.download(job)
     except KaerisError as e:
@@ -631,6 +682,7 @@ def kaeris_translate_file(
     tone: str = "",
     icu: bool = False,
     reuse: dict = None,
+    context: str = "",
     api_key: str = "",
     openrouter_key: str = "",
 ) -> dict:
@@ -648,6 +700,10 @@ def kaeris_translate_file(
                   kaeris.lock (a tone/ICU/glossary change re-translates all); unchanged stays stable. JSON only.
         keep: optional list of terms to NEVER translate — kept verbatim in every language
               (brand/product names), e.g. ["KAERIS", "GitHub"].
+        context: one line about what the app IS, e.g. "a mobile bank for teenagers" or
+              "a wildlife documentary app". The model uses it to pick the right sense of
+              ambiguous strings — "Bank" becomes Ufer in the second and Bank in the first.
+              You are reading the repo, so you know this: pass it. Max 300 chars.
         verify: back-translate each result into back_lang to confirm meaning (non-incremental only).
         back_lang: language for the verify back-translation (default "en").
         tone: "formal" or "casual" to steer register; "" (default) is neutral.
@@ -673,14 +729,14 @@ def kaeris_translate_file(
 
     if only_new and fname.lower().endswith(".json"):
         return _translate_file_incremental(client, file_path, out, target_languages, keep or [],
-                                            tone=tone, icu=icu)
+                                           tone=tone, icu=icu, context=context)
 
     with open(file_path, "rb") as f:
         content = f.read()
     try:
         job = client.submit(fname, content, target_languages, keep or [],
                             verify=verify, back_lang=back_lang,
-                            tone=tone, icu=icu, reuse=reuse)
+                            tone=tone, icu=icu, reuse=reuse, app_context=context)
         status = client.poll(job)
         members = client.download(job)
     except KaerisError as e:
@@ -702,7 +758,8 @@ def kaeris_translate_file(
     return result
 
 
-def _translate_file_incremental(client, path, out, languages, keep=None, tone="", icu=False):
+def _translate_file_incremental(client, path, out, languages, keep=None, tone="", icu=False,
+                                context=""):
     source_obj = inc.load_json(path)
     source_flat = inc.flatten(source_obj)
     flat_style = inc.is_flat(source_obj)
@@ -715,7 +772,7 @@ def _translate_file_incremental(client, path, out, languages, keep=None, tone=""
     lock_path = inc.default_lock_path(path)
     lock_raw = inc.load_lock(lock_path)
     detect_lock = inc.lock_keys(lock_raw)
-    cur_settings = inc.settings_signature(tone, icu, keep or [], _current_model(client))
+    cur_settings = inc.settings_signature(tone, icu, keep or [], _current_model(client), context)
     locked_settings = inc.lock_settings(lock_raw)
     settings_changed = inc.settings_changed(locked_settings, cur_settings)
 
@@ -735,7 +792,7 @@ def _translate_file_incremental(client, path, out, languages, keep=None, tone=""
         content = json.dumps(subset, ensure_ascii=False).encode()
         try:
             job = client.submit(os.path.basename(path), content, [lang], keep or [],
-                                tone=tone, icu=icu)
+                                tone=tone, icu=icu, app_context=context)
             status = client.poll(job)
             members = client.download(job)
         except KaerisError as e:

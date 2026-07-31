@@ -17,7 +17,10 @@ FROM python:3.12-slim
 
 # Deps first: this layer only rebuilds when the dependency set changes, not on
 # every source edit. No compiler needed — both packages are pure Python.
-RUN pip install --no-cache-dir "kaeris>=0.2.4" "mcp>=1.2"
+# The install below is --no-deps, so THIS line decides the versions in the image.
+# kaeris>=0.2.11 is what the server needs to send the app context; mcp>=1.2 covers
+# both SDK generations (the import falls back to 2.x's new location).
+RUN pip install --no-cache-dir "kaeris>=0.2.11" "mcp>=1.2"
 
 WORKDIR /src
 COPY pyproject.toml README.md ./
