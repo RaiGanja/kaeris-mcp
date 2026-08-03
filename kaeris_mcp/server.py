@@ -23,6 +23,7 @@ except ImportError:  # MCP SDK >= 2.0 renamed FastMCP to MCPServer and moved it
 
 from kaeris.client import KaerisClient, KaerisError
 from kaeris import check as chk
+from kaeris import detectors as det
 from kaeris import incremental as inc
 
 from . import __version__
@@ -382,9 +383,14 @@ def kaeris_status(source: str, langs: list = None, out: str = "") -> dict:
     offline; other formats (.arb/.strings/.po/.xml/.ftl/…) are parsed by the backend
     /api/parse endpoint (no translation, no cost).
 
-    For each target language reports missing keys, extra/stale keys, and
+    For each target language reports missing keys, extra/stale keys,
     placeholder mismatches (e.g. "Hello {name}" -> "Bonjour" loses {name}, or
-    "{name}" -> "{nom}" which crashes str.format()/ICU at runtime). Use this
+    "{name}" -> "{nom}" which crashes str.format()/ICU at runtime), and the same
+    quality detectors the CLI firewall gates a merge on: number drift
+    ("Delete 5 files" -> "Delete 50 files"), lost inline tags, broken entities
+    or escapes, missing ICU/CLDR plural categories. Those come back under
+    "faults" (RED — they set ok=false) and "warnings" (YELLOW — advisory).
+    Use this
     to find out what's broken before deciding whether to call
     kaeris_list_missing_keys (existing locale, some keys missing/broken) or
     kaeris_add_language (locale doesn't exist yet at all).
@@ -402,6 +408,8 @@ def kaeris_status(source: str, langs: list = None, out: str = "") -> dict:
     Returns:
         { "ok": bool, "missing": {lang: [keys]}, "extra": {lang: [keys]},
           "placeholder_issues": [{"lang","key","missing","added"}, ...],
+          "faults": [{"lang","key","severity":"error","msg"}, ...],    # RED — ok is false
+          "warnings": [{"lang","key"?,"severity":"warn","msg"}, ...],  # YELLOW — advisory
           "missing_files": [lang, ...],  # target language has no locale file at all
           "source", "out_dir", "langs" }
     """
@@ -417,8 +425,13 @@ def kaeris_status(source: str, langs: list = None, out: str = "") -> dict:
     source_flat = _load_flat(source, client)
     ext = _source_ext(source)          # target locales share the source's format/extension
 
-    # Same shape as chk.check_locales, but in flat space so any parsed format works, not only JSON.
-    result = {"ok": True, "missing": {}, "extra": {}, "placeholder_issues": [], "missing_files": []}
+    # Same shape AND the same verdict as chk.check_locales, but in flat space so any parsed
+    # format works, not only JSON. Until 03.08.2026 this ran the key/placeholder diff and
+    # nothing else: a number drift ("Delete 5 files" -> "50 Dateien löschen") that the CLI
+    # blocks a merge over came back as ok=true, so an agent asked to check a repo told its
+    # human everything was fine. A false all-clear is worse than no tool at all.
+    result = {"ok": True, "missing": {}, "extra": {}, "placeholder_issues": [],
+              "missing_files": [], "faults": [], "warnings": []}
     for lang in target_langs:
         target_path = _target_locale_path(source, lang, out_dir, f"{lang}{ext}")
         try:
@@ -438,6 +451,27 @@ def kaeris_status(source: str, langs: list = None, out: str = "") -> dict:
             result["placeholder_issues"].append({"lang": lang, **issue})
         if issues:
             result["ok"] = False
+
+        # The detectors — number drift, lost inline tags, broken entities, ICU/CLDR plural
+        # completeness, glossary terms. RED faults decide `ok`, exactly as in the CLI;
+        # YELLOW warnings are advisory there and stay advisory here.
+        for key, src_val in source_flat.items():
+            tgt_val = target_flat.get(key)
+            if not isinstance(src_val, str) or not isinstance(tgt_val, str):
+                continue
+            for f in det.string_faults(src_val, tgt_val, lang, None):
+                rec = {"lang": lang, "key": key, "msg": f["msg"]}
+                if f["severity"] == det.ERROR:
+                    result["faults"].append({**rec, "severity": "error"})
+                    result["ok"] = False
+                else:
+                    result["warnings"].append({**rec, "severity": "warn"})
+        # File-level detectors read text: a locale legitimately holds numbers, booleans and
+        # nulls, and joining those raises TypeError (the bug this same sweep found in the CLI).
+        src_text = {k: v for k, v in source_flat.items() if isinstance(v, str)}
+        tgt_text = {k: v for k, v in target_flat.items() if isinstance(v, str)}
+        for f in det.file_faults(src_text, tgt_text, lang):
+            result["warnings"].append({"lang": lang, "msg": f["msg"], "severity": "warn"})
 
     result["source"] = source
     result["out_dir"] = out_dir

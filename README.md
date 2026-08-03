@@ -11,7 +11,7 @@ languages** — placeholder-safe, format-aware, incremental, with built-in Trans
 | Tool | What it does | Calls the API? |
 |------|--------------|:---:|
 | `kaeris_scan_repo` | Discover a repo's i18n setup: locale files found, base language, target languages, framework guess (i18next/next-intl/vue-i18n/Flutter/Android/iOS/gettext/generic) | No |
-| `kaeris_status` | Completeness/health per target locale — missing keys, extra keys, placeholder mismatches (same as `kaeris check --json`) | No |
+| `kaeris_status` | Completeness/health per target locale — missing keys, extra keys, placeholder mismatches, plus the quality detectors that gate a merge in CI: number drift, lost inline tags, broken entities/escapes, ICU/CLDR plural gaps (same verdict as `kaeris check --json`) | No |
 | `kaeris_list_missing_keys` | The exact missing/broken keys (with source text) for one target locale, so an agent knows exactly what to fix | No |
 | `kaeris_list_languages` | List all supported target languages | No |
 | `kaeris_translate` | Translate inline strings → per-language results, with QA (placeholder-loss & UI-overflow flags; `verify=True` back-translates to check meaning) | Yes |
@@ -30,8 +30,9 @@ model. That means:
 
 - **Edit one string** — only that string is re-translated; everything else stays byte-for-byte.
 - **Change tone, glossary or context** — the whole locale is re-translated, never a mix of old and new.
-- **Change plan** — your plan picks the model (Free runs DeepSeek V3, paid runs GPT-4o-mini), so
-  upgrading re-translates the locale instead of blending two models' output.
+- **Change plan** — every tier runs the same model (GPT-4o-mini), so upgrading does not force a
+  re-translation. The lock records the model regardless: the day we change it, the locale is
+  rebuilt in full instead of quietly ending up the work of two models.
 
 Commit `kaeris.lock` alongside your source file so the agent, your teammates and CI all agree on
 what is already done.
