@@ -30,7 +30,7 @@ model. That means:
 
 - **Edit one string** — only that string is re-translated; everything else stays byte-for-byte.
 - **Change tone, glossary or context** — the whole locale is re-translated, never a mix of old and new.
-- **Change plan** — every tier runs the same model (GPT-4o-mini), so upgrading does not force a
+- **Change plan** — every tier runs the same model (Gemini 2.5 Flash-Lite), so upgrading does not force a
   re-translation. The lock records the model regardless: the day we change it, the locale is
   rebuilt in full instead of quietly ending up the work of two models.
 
