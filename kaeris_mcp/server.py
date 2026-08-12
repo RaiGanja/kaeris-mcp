@@ -273,7 +273,11 @@ def _load_kaeris_config(source):
         path = os.path.join(d, "kaeris.json")
         if os.path.isfile(path):
             try:
-                with open(path, encoding="utf-8") as f:
+                # utf-8-sig: kaeris.json, сохранённый на Windows, начинается с BOM, и
+                # строгий utf-8 на нём падает — тихо, в except ниже, вместе с langs/out
+                # проекта. Файлы локалей сюда не попадают: они уходят на сервер байтами,
+                # и кодировку разбирает он (пункт 7 плана безопасности).
+                with open(path, encoding="utf-8-sig") as f:
                     raw = json.load(f)
             except (OSError, ValueError):
                 return {}
