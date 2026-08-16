@@ -21,7 +21,7 @@ except ImportError:  # MCP SDK >= 2.0 renamed FastMCP to MCPServer and moved it
     # fresh environment resolves to the newest SDK and dies on this import.
     from mcp.server.mcpserver import MCPServer as FastMCP
 
-from kaeris.client import KaerisClient, KaerisError
+from kaeris.client import KaerisClient, KaerisError, safe_member_name
 from kaeris import check as chk
 from kaeris import detectors as det
 from kaeris import incremental as inc
@@ -213,6 +213,25 @@ def _resolve_out_dir(source, out):
     return out or os.path.dirname(os.path.abspath(source)) or "."
 
 
+def _safe_segments(member_name):
+    """Path segments a downloaded member may be written under. Raises if the name tries to
+    leave the output directory — see KaerisClient.download for what this defends against."""
+    return safe_member_name(member_name).split("/")
+
+
+def _refuse_outside_project(dest, out_dir):
+    """The written file must stay inside the project. Layout mirroring legitimately writes to
+    a SIBLING of out_dir (locales/en -> locales/de), so the boundary is the folder that holds
+    out_dir — one step up, and not one step more."""
+    root = os.path.abspath(os.path.dirname(os.path.abspath(out_dir)) or os.sep)
+    full = os.path.abspath(dest)
+    if full != root and not full.startswith(root + os.sep):
+        raise RuntimeError(
+            f"Refusing to write {dest} — it is outside the project directory {root}. "
+            "Nothing was written.")
+    return full
+
+
 def _target_locale_path(source, lang, out_dir, member_name):
     """Where the `lang` translation belongs, mirroring the SOURCE file's layout for the two
     framework conventions the flat backend member name ('<lang>.json') loses: i18next/
@@ -241,7 +260,14 @@ def _target_locale_path(source, lang, out_dir, member_name):
             if _LANG_RE.match(langish):
                 return os.path.join(src_dir or ".", f"{prefix}_{lang}{ext}")
 
-    return os.path.join(out_dir, member_name)
+    # The member name comes off the wire, so it is built into a path from sanitized segments
+    # only, and the result is checked to stay inside the project (the folder holding out_dir,
+    # which is as far as layout-mirroring ever reaches — locales/en -> locales/de). The client
+    # already refuses escaping names; this is the second half of the same guard, on the side
+    # that actually opens the file for writing.
+    dest = os.path.join(out_dir, *_safe_segments(member_name))
+    _refuse_outside_project(dest, out_dir)
+    return dest
 
 
 def _discover_locale_langs(source, out_dir):
@@ -706,9 +732,13 @@ def kaeris_add_language(
     if lang in (status.get("failed_langs") or []):
         raise RuntimeError(f"Translation for '{lang}' failed and returned source text — not written")
 
+    # Every destination is resolved (and checked) BEFORE anything is opened for writing: a
+    # refusal must not be half-applied, leaving one file on disk and an exception in the agent's
+    # lap. Caught by the test for this guard, not by reading the code.
+    plan = [(_target_locale_path(source, lang, out_dir, name), data)
+            for name, data in members.items()]
     written = []
-    for name, data in members.items():
-        dest = _target_locale_path(source, lang, out_dir, name)
+    for dest, data in plan:
         os.makedirs(os.path.dirname(dest) or out_dir, exist_ok=True)
         with open(dest, "wb") as f:
             f.write(data)
@@ -902,10 +932,12 @@ def kaeris_translate_file(
     except KaerisError as e:
         raise RuntimeError(str(e))
 
+    # Resolve (and check) every destination first — see kaeris_add_language.
+    plan = [(_target_locale_path(file_path, os.path.splitext(os.path.basename(name))[0],
+                                 out, name), data)
+            for name, data in members.items()]
     written = []
-    for name, data in members.items():
-        member_stem = os.path.splitext(os.path.basename(name))[0]
-        dest = _target_locale_path(file_path, member_stem, out, name)
+    for dest, data in plan:
         os.makedirs(os.path.dirname(dest) or out, exist_ok=True)
         with open(dest, "wb") as f:
             f.write(data)
