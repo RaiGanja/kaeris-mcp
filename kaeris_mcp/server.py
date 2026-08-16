@@ -735,7 +735,9 @@ def kaeris_translate_file(
         target_languages: language codes, e.g. ["de", "uk", "zh"].
         out_dir: where to write outputs (default: the source file's directory).
         only_new: reproducible incremental mode — translate only new AND edited keys, tracked via
-                  kaeris.lock (a tone/ICU/glossary change re-translates all); unchanged stays stable. JSON only.
+                  kaeris.lock (a tone/ICU/glossary change re-translates all); unchanged stays
+                  stable. JSON and ARB only — for any other format the whole file is translated
+                  (and charged), and the result says so in "note".
         keep: optional list of terms to NEVER translate — kept verbatim in every language
               (brand/product names), e.g. ["KAERIS", "GitHub"].
         context: one line about what the app IS, e.g. "a mobile bank for teenagers" or
@@ -765,9 +767,17 @@ def kaeris_translate_file(
     fname = os.path.basename(file_path)
     client = _client(api_key, openrouter_key)
 
-    if only_new and fname.lower().endswith(".json"):
-        return _translate_file_incremental(client, file_path, out, target_languages, keep or [],
-                                           tone=tone, icu=icu, context=context)
+    only_new_note = ""
+    if only_new:
+        if fname.lower().endswith((".json", ".arb")):
+            return _translate_file_incremental(client, file_path, out, target_languages, keep or [],
+                                               tone=tone, icu=icu, context=context)
+        # Silence here billed the client for the WHOLE file after they asked for the delta —
+        # and the agent reported plain success. The CLI says this out loud; so do we.
+        only_new_note = (
+            f"only_new is supported for JSON and ARB only — the whole "
+            f"{os.path.splitext(fname)[1] or 'file'} was translated and charged, not just the "
+            f"new keys.")
 
     with open(file_path, "rb") as f:
         content = f.read()
@@ -789,6 +799,8 @@ def kaeris_translate_file(
             f.write(data)
         written.append(dest)
     result = {"written": written, "languages": target_languages}
+    if only_new_note:
+        result["note"] = only_new_note
     failed = status.get("failed_langs") or []
     if failed:
         result["failed_languages"] = failed
@@ -796,33 +808,67 @@ def kaeris_translate_file(
     return result
 
 
+def _arb_meta_key(flat_key):
+    """True if a flattened key belongs to ARB non-translatable metadata: its FIRST dotted
+    segment starts with '@' (`@@locale`, `@foo`, `@foo.placeholders...`). Never sent to the
+    model — same rule as the CLI."""
+    return flat_key.split(".", 1)[0].startswith("@")
+
+
 def _translate_file_incremental(client, path, out, languages, keep=None, tone="", icu=False,
                                 context=""):
+    """Delta translation with the SAME rules as `kaeris translate --only-new`.
+
+    This used to be a simplified copy of the CLI's incremental path, and the copy fell three
+    fixes behind (all three reproduced on 16.08.2026 before this rewrite):
+      * it wrote to a flat `<out>/<lang>.json`, ignoring the layout every other tool mirrors —
+        on an i18next repo (locales/en/translation.json) a COMPLETE, up-to-date German locale
+        was never found, so every run resent the whole file (the client pays for all of it) and
+        the result landed in locales/en/de.json, where nothing reads it;
+      * it detected against ONE global baseline, so translating German today marked an edited
+        English string as done for French too — French kept the old meaning forever — and
+        writing the lock without per-language baselines ERASED the ones the CLI had recorded;
+      * it had no unverified-keys guard: translations that exist with nothing in the lock
+        vouching for them were stamped as current, which makes the loss permanent.
+    """
+    is_arb = path.lower().endswith(".arb")
     source_obj = inc.load_json(path)
     source_flat = inc.flatten(source_obj)
+    if is_arb:
+        source_flat = {k: v for k, v in source_flat.items() if not _arb_meta_key(k)}
     flat_style = inc.is_flat(source_obj)
     source_hashes = inc.hash_flat(source_flat)
+    ext = _source_ext(path)
 
-    # Reproducible incremental — parity with the CLI. kaeris.lock records each source string's
-    # hash plus the run settings, so an EDITED source value or a tone/ICU/glossary change triggers
-    # (re)translation while unchanged strings are reused verbatim. (Plain missing_keys used to
-    # silently keep a stale translation when the English text was edited.)
+    # kaeris.lock records each source string's hash plus the run settings, so an EDITED source
+    # value or a tone/ICU/glossary change triggers (re)translation while unchanged strings are
+    # reused verbatim. (Plain missing_keys used to silently keep a stale translation when the
+    # English text was edited.)
     lock_path = inc.default_lock_path(path)
     lock_raw = inc.load_lock(lock_path)
-    detect_lock = inc.lock_keys(lock_raw)
+    detect_lock = inc.lock_keys(lock_raw)      # global map: "reached every language"
+    lang_locks = inc.lock_langs(lock_raw)      # per-language baselines
     cur_settings = inc.settings_signature(tone, icu, keep or [], _current_model(client), context)
     locked_settings = inc.lock_settings(lock_raw)
     settings_changed = inc.settings_changed(locked_settings, cur_settings)
 
     written, skipped, failed = [], [], []
     broken = set()
+    broken_by_lang = {}
+    unverified_by_lang = {}
 
     for lang in languages:
-        target_path = os.path.join(out, f"{lang}.json")
+        target_path = _target_locale_path(path, lang, out, f"{lang}{ext}")
+        os.makedirs(os.path.dirname(target_path) or ".", exist_ok=True)
         existing = inc.load_json(target_path) if os.path.isfile(target_path) else {}
         existing_flat = inc.flatten(existing) if existing else {}
+        # Detect against THIS language's baseline: a run that touched only German must not
+        # mark an edited string as done for French.
+        lang_baseline = inc.lock_keys(lock_raw, lang)
+        if not settings_changed:
+            unverified_by_lang[lang] = inc.unverified_keys(source_flat, existing_flat, lang_baseline)
         todo = (dict(source_flat) if settings_changed
-                else inc.changed_or_missing_keys(source_flat, existing_flat, detect_lock))
+                else inc.changed_or_missing_keys(source_flat, existing_flat, lang_baseline))
         if not todo:
             skipped.append(lang)
             continue
@@ -838,34 +884,67 @@ def _translate_file_incremental(client, path, out, languages, keep=None, tone=""
         # Don't merge a failed (source-fallback) result — it would poison existing translations
         if lang in (status.get("failed_langs") or []):
             failed.append(lang)
-            broken.update(todo)   # not merged — keep these keys stale-locked for a retry
+            broken_by_lang[lang] = set(todo)   # not merged — keep these keys stale-locked
             continue
         translated = None
         for name, data in members.items():
-            if name.endswith(".json"):
+            if name.lower().endswith((".json", ".arb")):
                 translated = json.loads(data.decode("utf-8"))
                 break
         if translated is None:
-            broken.update(todo)
+            broken_by_lang[lang] = set(todo)
             continue
         merged = inc.merge_translation(existing, translated)
+        if is_arb:
+            merged["@@locale"] = lang       # stamp the target locale on the written ARB
         inc.dump_json(merged, target_path)
         written.append(target_path)
 
-    # Advance the lock once, after every language: record a key's current hash unless it was left
-    # broken; keep the old settings if a settings change couldn't be fully applied (so the next
-    # run re-forces the stragglers).
+    # Advance the lock exactly once, AFTER every language. Per-language baselines record what
+    # each language actually took, so a later run for a DIFFERENT language still sees the edit
+    # as pending; the global map keeps its old meaning ("current in EVERY language we know
+    # about") so an older client reading this lock is not told a key is done while one lags.
+    unverified_all = set()
+    for keys in unverified_by_lang.values():
+        unverified_all |= keys
+    for lang in languages:
+        base = dict(lang_locks.get(lang) or inc.lock_keys(lock_raw, lang))
+        skip = broken_by_lang.get(lang, set()) | unverified_by_lang.get(lang, set())
+        for k, h in source_hashes.items():
+            if k not in skip:
+                base[k] = h
+        lang_locks[lang] = {k: v for k, v in base.items() if k in source_hashes}
+    # Never record a hash for something nobody checked: that is what made the loss permanent.
+    broken |= unverified_all
+    for keys in broken_by_lang.values():
+        broken |= keys
+
     new_keys = dict(detect_lock)
     for k in source_hashes:
-        if k not in broken:
+        if k in broken:
+            continue
+        if all(m.get(k) == source_hashes[k] for m in lang_locks.values()):
             new_keys[k] = source_hashes[k]
+        else:
+            new_keys.pop(k, None)
+    # Keep the OLD settings if a settings change couldn't be fully applied, so the next run
+    # re-forces the stragglers.
     final_settings = locked_settings if (settings_changed and broken) else cur_settings
-    inc.dump_lock(inc.build_lock(new_keys, final_settings), lock_path)
+    inc.dump_lock(inc.build_lock(new_keys, final_settings, lang_locks), lock_path)
 
     result = {"written": written, "up_to_date": skipped, "languages": languages}
     if failed:
         result["failed_languages"] = failed
         result["warning"] = f"{len(failed)} language(s) could not be translated and were skipped: {', '.join(failed)}"
+    if unverified_all:
+        # Say it out loud: the agent is the one deciding what to do next, and "left alone" is
+        # only honest if it is visible.
+        result["unverified_keys"] = sorted(unverified_all)
+        result["unverified_note"] = (
+            f"{len(unverified_all)} key(s) already exist in the target locale(s) but nothing in "
+            "kaeris.lock vouches for them, so they were NOT translated and NOT recorded as "
+            "current. If those translations are known good, translate the file once without "
+            "only_new to establish a baseline.")
     return result
 
 
