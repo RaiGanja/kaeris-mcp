@@ -330,6 +330,60 @@ def _current_model(client):
         return ""
 
 
+# ---------------------------------------------------------------------------
+# Bounds on what a tool hands back to the model.
+#
+# Measured 16.08.2026 on a file of the size the product officially accepts (2 MB, 20 237
+# strings): kaeris_list_missing_keys returned 2.7M characters — about 667 000 tokens in ONE
+# tool result. That does not "make the answer long", it ends the agent's session, and the
+# client pays their own provider for every token of it. Our own 239-string locale already
+# cost ~4 500 tokens, and kaeris_status over 10 languages ~9 800.
+#
+# The rule: counts and the verdict are ALWAYS exact and complete — they are what a decision
+# is made on. Only the detail lists are paged, and a paged list says so in the same breath
+# (a silent cut reads as "that's all of it", which is how a tool starts lying).
+# ---------------------------------------------------------------------------
+_PAGE_DEFAULT = 200      # detail entries per page unless the caller asks for another size
+_PAGE_MAX = 2000         # ceiling even when the caller asks for more
+_PAGE_CHAR_BUDGET = 60000  # ≈15k tokens: a page stops here even if the entry count doesn't
+_STATUS_EXAMPLES = 50    # per-language / per-list examples inside kaeris_status
+
+
+def _page_keys(keys, values, offset, limit):
+    """One page of (keys, {key: value}) plus honest bookkeeping.
+
+    Cuts on WHOLE entries only: a value sliced in half is corrupted content, and content is
+    the client's, not ours."""
+    total = len(keys)
+    offset = max(0, int(offset or 0))
+    limit = min(max(1, int(limit or _PAGE_DEFAULT)), _PAGE_MAX)
+    window = keys[offset:offset + limit]
+
+    page, used = [], 0
+    for k in window:
+        v = values.get(k) if values is not None else None
+        used += len(k) + (len(v) if isinstance(v, str) else 8) + 8
+        if page and used > _PAGE_CHAR_BUDGET:
+            break
+        page.append(k)
+
+    shown_to = offset + len(page)
+    info = {"total": total, "returned": len(page), "offset": offset,
+            "complete": offset == 0 and shown_to >= total}
+    if shown_to < total:
+        info["next_offset"] = shown_to
+        info["note"] = (f"showing {len(page)} of {total} — this is a PAGE, not the whole list. "
+                        f"Call again with offset={shown_to} for the next one, or use "
+                        f"kaeris_add_language / kaeris_translate_file(only_new=True) to have "
+                        f"KAERIS fill them in instead of doing it key by key.")
+    return page, info
+
+
+def _cap(items, limit=_STATUS_EXAMPLES):
+    """First `limit` entries of a detail list, plus how many there are in total."""
+    return list(items[:limit]), len(items)
+
+
 def _client(api_key="", openrouter_key=""):
     return KaerisClient(
         api_url=os.environ.get("KAERIS_API_URL", "https://kaeris.dev"),
@@ -415,7 +469,15 @@ def kaeris_status(source: str, langs: list = None, out: str = "") -> dict:
           "faults": [{"lang","key","severity":"error","msg"}, ...],    # RED — ok is false
           "warnings": [{"lang","key"?,"severity":"warn","msg"}, ...],  # YELLOW — advisory
           "missing_files": [lang, ...],  # target language has no locale file at all
+          "counts": {"missing": {lang: n}, "extra": {lang: n},
+                     "placeholder_issues": n, "faults": n, "warnings": n},
+          "note": "...",                 # present only when a list was shortened
           "source", "out_dir", "langs" }
+
+    "ok", "counts" and "missing_files" are always exact and complete. The lists are EXAMPLES —
+    at most 50 entries each — because a status call over a large repo otherwise returns a
+    six-figure token bill in a single reply. Use kaeris_list_missing_keys (paged) for the full
+    picture of one language.
     """
     out_dir = _resolve_out_dir(source, out)
     target_langs = _resolve_langs(source, langs, out_dir)
@@ -477,6 +539,33 @@ def kaeris_status(source: str, langs: list = None, out: str = "") -> dict:
         for f in det.file_faults(src_text, tgt_text, lang):
             result["warnings"].append({"lang": lang, "msg": f["msg"], "severity": "warn"})
 
+    # Exact counts first, examples second. `ok`, the counts and `missing_files` are the whole
+    # basis for a decision and are never cut; the lists behind them are examples, and a cut
+    # list says so. (Before 16.08.2026 nothing was cut: 10 languages against a 2 MB source
+    # meant a six-figure token bill for one status call — see the bounds block above.)
+    result["counts"] = {
+        "missing": {lang: len(keys) for lang, keys in result["missing"].items()},
+        "extra": {lang: len(keys) for lang, keys in result["extra"].items()},
+        "placeholder_issues": len(result["placeholder_issues"]),
+        "faults": len(result["faults"]),
+        "warnings": len(result["warnings"]),
+    }
+    shortened = False
+    for section in ("missing", "extra"):
+        for lang, keys in list(result[section].items()):
+            if len(keys) > _STATUS_EXAMPLES:
+                shortened = True
+                result[section][lang] = keys[:_STATUS_EXAMPLES]
+    for section in ("placeholder_issues", "faults", "warnings"):
+        if len(result[section]) > _STATUS_EXAMPLES:
+            shortened = True
+            result[section] = result[section][:_STATUS_EXAMPLES]
+    if shortened:
+        result["note"] = (
+            f"Lists are examples — at most {_STATUS_EXAMPLES} entries each; \"counts\" holds the "
+            "exact totals. For the full list of one language use kaeris_list_missing_keys "
+            "(it pages), or let kaeris_translate_file(only_new=True) fill the gaps.")
+
     result["source"] = source
     result["out_dir"] = out_dir
     result["langs"] = target_langs
@@ -484,24 +573,36 @@ def kaeris_status(source: str, langs: list = None, out: str = "") -> dict:
 
 
 @mcp.tool()
-def kaeris_list_missing_keys(source: str, lang: str, out: str = "") -> dict:
+def kaeris_list_missing_keys(source: str, lang: str, out: str = "",
+                             limit: int = _PAGE_DEFAULT, offset: int = 0) -> dict:
     """The exact keys missing or placeholder-broken in ONE target locale, with
     their source-language text, so an agent knows exactly what to translate/fix.
     Every supported format works (JSON offline; others via the backend /api/parse,
     no cost) — use kaeris_add_language or kaeris_translate to actually fill them in.
+
+    The answer is PAGED: "missing_count" is always the exact total, while "missing" /
+    "missing_values" carry one page of it (default 200 entries, and never more than about
+    15k tokens' worth). A whole locale file returned in one tool result is not a long answer,
+    it is the end of the agent's session — measured 16.08.2026: a 2 MB source file, the size
+    the product accepts, produced 667 000 tokens in a single reply. When there is a next page,
+    "page.next_offset" says where it starts.
 
     Args:
         source: path to the base-language locale file, e.g. "locales/en.json" or "app_en.arb".
         lang: the target language code to inspect, e.g. "de".
         out: directory containing the target locale file (default: source's own
              directory; expected at "<out>/<lang><source-ext>", e.g. de.json / de.arb).
+        limit: how many missing keys to return in this call (default 200, max 2000).
+        offset: where to start — pass "page.next_offset" from the previous call.
 
     Returns:
         { "lang": "de", "missing_file": bool,
-          "missing": ["<dotted.key>", ...],           # present in source, absent in target
-          "missing_values": {"<dotted.key>": "<source text>", ...},
-          "extra": ["<dotted.key>", ...],              # present in target, absent in source
-          "placeholder_issues": [{"key","missing","added"}, ...] }
+          "missing_count": 1234,                       # ALWAYS the exact total
+          "missing": ["<dotted.key>", ...],            # one page of them
+          "missing_values": {"<dotted.key>": "<source text>", ...},   # the same page
+          "page": {"total", "returned", "offset", "complete", "next_offset"?, "note"?},
+          "extra": ["<dotted.key>", ...], "extra_count": 12,
+          "placeholder_issues": [{"key","missing","added"}, ...], "placeholder_issue_count": 3 }
     """
     out_dir = _resolve_out_dir(source, out)
     client = _client()                 # anonymous — /api/parse needs no auth and costs nothing
@@ -510,24 +611,35 @@ def kaeris_list_missing_keys(source: str, lang: str, out: str = "") -> dict:
 
     target_path = _target_locale_path(source, lang, out_dir, f"{lang}{ext}")
     if not os.path.isfile(target_path):
+        keys = sorted(source_flat)
+        page, info = _page_keys(keys, source_flat, offset, limit)
         return {
             "lang": lang,
             "missing_file": True,
-            "missing": sorted(source_flat),
-            "missing_values": dict(source_flat),
-            "extra": [],
-            "placeholder_issues": [],
+            "missing_count": len(keys),
+            "missing": page,
+            "missing_values": {k: source_flat[k] for k in page},
+            "page": info,
+            "extra": [], "extra_count": 0,
+            "placeholder_issues": [], "placeholder_issue_count": 0,
         }
 
     target_flat = _load_flat(target_path, client)
     missing, extra, issues = chk.diff_locale(source_flat, target_flat)
+    page, info = _page_keys(missing, source_flat, offset, limit)
+    extra_page, extra_total = _cap(extra, _PAGE_MAX)
+    issue_page, issue_total = _cap(issues, _STATUS_EXAMPLES)
     return {
         "lang": lang,
         "missing_file": False,
-        "missing": missing,
-        "missing_values": {k: source_flat[k] for k in missing},
-        "extra": extra,
-        "placeholder_issues": issues,
+        "missing_count": len(missing),
+        "missing": page,
+        "missing_values": {k: source_flat[k] for k in page},
+        "page": info,
+        "extra": extra_page,
+        "extra_count": extra_total,
+        "placeholder_issues": issue_page,
+        "placeholder_issue_count": issue_total,
     }
 
 
