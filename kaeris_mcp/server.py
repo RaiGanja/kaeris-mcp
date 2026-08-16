@@ -25,6 +25,7 @@ from kaeris.client import KaerisClient, KaerisError, safe_member_name
 from kaeris import check as chk
 from kaeris import detectors as det
 from kaeris import incremental as inc
+from kaeris import xcstrings as xc
 
 from . import __version__
 
@@ -65,8 +66,15 @@ _SKIP_DIRS = {
     "node_modules", "dist", "build", "target", "vendor", "coverage",
     ".git", ".venv", "venv", "__pycache__", ".next", ".cache", ".idea", ".vscode",
 }
+# Every format the API accepts (backend `_SUPPORTED_EXTS`). Kept in step by
+# tests/test_promises_match_the_product.py: when the two drifted, an agent read our own tool
+# description and told its human that a format we sell is not supported.
 _LOCALE_EXTS = {".json", ".yaml", ".yml", ".arb", ".strings", ".po", ".xml", ".csv",
-                ".xliff", ".xlf", ".properties", ".resx", ".ftl"}
+                ".xliff", ".xlf", ".properties", ".resx", ".ftl", ".xcstrings",
+                ".md", ".mdx", ".markdown"}
+# An Xcode String Catalog holds EVERY language in one file, so it has no language in its name
+# — its languages are read out of the catalog itself.
+_CATALOG_EXTS = {".xcstrings"}
 # A bare language/locale code: en, de, en-US, en_US, zh-Hans, pt-BR, ...
 _LANG_RE = re.compile(r"^[a-zA-Z]{2,3}([_-][a-zA-Z]{2,4})?$")
 _PREFERRED_BASE = ("en", "en-us", "en_us")
@@ -164,6 +172,8 @@ def _guess_framework(found):
         return "flutter (arb)"
     if any_match(r"(^|/)values(-[^/]+)?/[^/]+\.xml$"):
         return "android (strings.xml)"
+    if any_match(r"\.xcstrings$"):
+        return "ios/macos (xcstrings catalog)"
     if any_match(r"\.lproj/[^/]+\.strings$"):
         return "ios (.strings)"
     if any_match(r"LC_MESSAGES/[^/]+\.po$"):
@@ -189,14 +199,31 @@ def scan_repo(path="."):
             f"no such directory: {root} — pass an absolute path, or the repo root you want scanned"
         )
 
-    found = []
+    found, catalogs = [], []
     for dirpath, name in _walk_bounded(root):
+        if os.path.splitext(name)[1].lower() in _CATALOG_EXTS:
+            catalogs.append(os.path.join(dirpath, name))
+            continue
         info = _classify_locale_file(root, dirpath, name)
         if info:
             found.append(info)
 
-    langs_present = sorted({f["lang"] for f in found})
-    base_lang = _guess_base_lang(langs_present)
+    # String Catalogs: one file, every language inside it. Read them so an Xcode project is
+    # not reported as "no i18n here" — the catalog IS the whole setup.
+    catalog_langs, catalog_source = set(), None
+    for path in catalogs:
+        try:
+            src_lang, by_lang = xc.load(path)
+        except Exception:
+            continue                      # unreadable catalog: report the file, guess nothing
+        catalog_source = catalog_source or src_lang
+        catalog_langs.update(by_lang)
+        found.append({"path": os.path.relpath(path, root).replace(os.sep, "/"),
+                      "lang": src_lang, "ext": ".xcstrings"})
+
+    langs_present = sorted({f["lang"] for f in found} | catalog_langs)
+    # A catalog states its own source language — that beats guessing from file names.
+    base_lang = catalog_source or _guess_base_lang(langs_present)
     target_langs = [l for l in langs_present if l != base_lang] if base_lang else langs_present
 
     return {
@@ -442,8 +469,10 @@ def kaeris_scan_repo(path: str = ".") -> dict:
     (messages/<lang>.json), vue-i18n (src/locales/<lang>.json), Flutter ARB
     (lib/l10n/*.arb), Android (res/values[-<lang>]/strings.xml), iOS
     (<lang>.lproj/Localizable.strings), gettext (locale/<lang>/LC_MESSAGES/*.po),
-    XLIFF (.xliff/.xlf), Java/Spring .properties, .NET RESX,
-    plus plain <lang>.json/.yaml/.csv files anywhere else. Skips node_modules,
+    Xcode String Catalogs (Localizable.xcstrings — one file holding every language,
+    read out of the catalog itself), XLIFF (.xliff/.xlf), Java/Spring .properties,
+    .NET RESX, Mozilla Fluent (.ftl), Markdown/MDX, plus plain
+    <lang>.json/.yaml/.csv files anywhere else. Skips node_modules,
     .git, build/dist output and other noise; bounded so it's safe on large repos.
 
     Args:
@@ -868,8 +897,9 @@ def kaeris_translate_file(
 ) -> dict:
     """Translate a strings file on disk and write the results next to it.
 
-    Supports JSON, YAML, .strings, .po, ARB, Android XML, CSV, XLIFF 1.2,
-    Java/Spring .properties, .NET RESX and Mozilla Fluent (.ftl). With only_new=True
+    Supports JSON, YAML, .strings, Xcode String Catalogs (.xcstrings), .po, ARB,
+    Android XML, CSV, XLIFF 1.2, Java/Spring .properties, .NET RESX, Mozilla Fluent
+    (.ftl) and Markdown/MDX — every format the API accepts. With only_new=True
     (JSON), translates just the keys missing from existing target files and merges.
 
     Args:
