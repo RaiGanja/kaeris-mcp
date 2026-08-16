@@ -23,7 +23,7 @@ except ImportError:  # MCP SDK >= 2.0 renamed FastMCP to MCPServer and moved it
     # fresh environment resolves to the newest SDK and dies on this import.
     from mcp.server.mcpserver import MCPServer as FastMCP
 
-from kaeris.client import KaerisClient, KaerisError, safe_member_name
+from kaeris.client import KaerisClient, KaerisError, KaerisTimeout, safe_member_name
 from kaeris import check as chk
 from kaeris import detectors as det
 from kaeris import incremental as inc
@@ -439,6 +439,42 @@ def _cap(items, limit=_STATUS_EXAMPLES):
     return list(items[:limit]), len(items)
 
 
+# ---------------------------------------------------------------------------
+# How long one tool call may block.
+#
+# The client used to wait up to 1800 seconds inside a single tool call (and 180s per HTTP
+# request). No MCP client waits half an hour — Claude Desktop, Cursor and the rest cut a call
+# off on their own schedule, and when they do, the job id goes with it. The work was submitted,
+# it is being paid for, and nobody can ever collect it: the tool returned nothing to come back
+# with. Measured 16.08.2026: 60 strings × 8 languages take 8.3s, but a Pro-sized run (200k
+# characters, 25 languages) took 202s on the same path — minutes, in one call.
+#
+# So the wait is bounded well inside any client's patience, and running out of it is not an
+# error: it is an answer that carries the job id.
+# ---------------------------------------------------------------------------
+_MAX_WAIT = max(10, int(os.environ.get("KAERIS_MCP_MAX_WAIT", "50")))
+
+
+def _await(client, job):
+    """Wait for `job` within our own bound. Raises KaerisTimeout (carrying the id) if the
+    server is still working — the caller turns that into an answer, not a failure."""
+    return client.poll(job, max_wait=_MAX_WAIT)
+
+
+def _still_running(job, extra=None):
+    """The answer for a job that outlived our wait: everything needed to come back for it."""
+    body = {
+        "status": "running",
+        "job_id": job,
+        "note": (f"The translation is still running on the server after {_MAX_WAIT}s. It is "
+                 "already submitted and paid for — do NOT start it again. Call the same tool "
+                 f"with job_id=\"{job}\" (and the same file_path/out_dir) to collect the "
+                 "result; repeat until it returns written files."),
+    }
+    body.update(extra or {})
+    return body
+
+
 def _client(api_key="", openrouter_key=""):
     return KaerisClient(
         api_url=os.environ.get("KAERIS_API_URL", "https://kaeris.dev"),
@@ -711,6 +747,7 @@ def kaeris_add_language(
     context: str = "",
     api_key: str = "",
     openrouter_key: str = "",
+    job_id: str = "",
 ) -> dict:
     """Bootstrap a BRAND-NEW target locale by translating the entire source file
     into it and writing the result. Use this when kaeris_scan_repo/kaeris_status
@@ -736,13 +773,14 @@ def kaeris_add_language(
         api_key / openrouter_key: optional auth overrides. PREFER the KAERIS_API_KEY /
               KAERIS_OPENROUTER_KEY environment variables: a key passed as a tool argument is
               written into the conversation transcript and into the MCP client's logs, where
-              it outlives this task. PREFER the KAERIS_API_KEY /
-              KAERIS_OPENROUTER_KEY environment variables: a key passed as a tool argument is
-              written into the conversation transcript and into the MCP client's logs, where
               it outlives this task.
+        job_id: leave empty to start a translation. If a previous call came back with
+              {"status": "running", "job_id": ...}, pass that id (with the same source/out) to
+              collect the finished result instead of paying for the work twice.
 
     Returns:
         { "written": ["<out>/<lang>.json"], "lang": "de", "languages": ["de"] }
+        or, if the server is still working: { "status": "running", "job_id": "...", "note": ... }
     """
     if not os.path.isfile(source):
         raise FileNotFoundError(
@@ -758,11 +796,15 @@ def kaeris_add_language(
 
     with open(source, "rb") as f:
         content = f.read()
+    job = job_id.strip()
     try:
-        job = client.submit(fname, content, [lang], keep or [], tone=tone, icu=icu,
-                            app_context=context)
-        status = client.poll(job)
+        if not job:
+            job = client.submit(fname, content, [lang], keep or [], tone=tone, icu=icu,
+                                app_context=context)
+        status = _await(client, job)
         members = client.download(job)
+    except KaerisTimeout as e:
+        return _still_running(e.job_id, {"lang": lang})
     except KaerisError as e:
         raise RuntimeError(str(e))
 
@@ -796,6 +838,7 @@ def kaeris_translate(
     context: str = "",
     api_key: str = "",
     openrouter_key: str = "",
+    job_id: str = "",
 ) -> dict:
     """Translate a set of UI strings into one or more languages.
 
@@ -844,12 +887,16 @@ def kaeris_translate(
 
     client = _client(api_key, openrouter_key)
     content = json.dumps(strings, ensure_ascii=False).encode()
+    job = (job_id or "").strip()
     try:
-        job = client.submit("strings.json", content, target_languages, keep or [],
-                            verify=verify, back_lang=back_lang,
-                            tone=tone, icu=icu, reuse=reuse, app_context=context)
-        status = client.poll(job)
+        if not job:
+            job = client.submit("strings.json", content, target_languages, keep or [],
+                                verify=verify, back_lang=back_lang,
+                                tone=tone, icu=icu, reuse=reuse, app_context=context)
+        status = _await(client, job)
         members = client.download(job)
+    except KaerisTimeout as e:
+        return _still_running(e.job_id, {"languages": target_languages})
     except KaerisError as e:
         raise RuntimeError(str(e))
 
@@ -904,6 +951,7 @@ def kaeris_translate_file(
     context: str = "",
     api_key: str = "",
     openrouter_key: str = "",
+    job_id: str = "",
 ) -> dict:
     """Translate a strings file on disk and write the results next to it.
 
@@ -963,12 +1011,16 @@ def kaeris_translate_file(
 
     with open(file_path, "rb") as f:
         content = f.read()
+    job = (job_id or "").strip()
     try:
-        job = client.submit(fname, content, target_languages, keep or [],
-                            verify=verify, back_lang=back_lang,
-                            tone=tone, icu=icu, reuse=reuse, app_context=context)
-        status = client.poll(job)
+        if not job:
+            job = client.submit(fname, content, target_languages, keep or [],
+                                verify=verify, back_lang=back_lang,
+                                tone=tone, icu=icu, reuse=reuse, app_context=context)
+        status = _await(client, job)
         members = client.download(job)
+    except KaerisTimeout as e:
+        return _still_running(e.job_id, {"languages": target_languages})
     except KaerisError as e:
         raise RuntimeError(str(e))
 
@@ -1036,7 +1088,7 @@ def _translate_file_incremental(client, path, out, languages, keep=None, tone=""
     locked_settings = inc.lock_settings(lock_raw)
     settings_changed = inc.settings_changed(locked_settings, cur_settings)
 
-    written, skipped, failed = [], [], []
+    written, skipped, failed, pending = [], [], [], []
     broken = set()
     broken_by_lang = {}
     unverified_by_lang = {}
@@ -1061,8 +1113,14 @@ def _translate_file_incremental(client, path, out, languages, keep=None, tone=""
         try:
             job = client.submit(os.path.basename(path), content, [lang], keep or [],
                                 tone=tone, icu=icu, app_context=context)
-            status = client.poll(job)
+            status = _await(client, job)
             members = client.download(job)
+        except KaerisTimeout as e:
+            # This language is still being translated. Nothing is merged, and its keys stay
+            # stale-locked below, so the next only_new run picks exactly them up again.
+            pending.append({"lang": lang, "job_id": e.job_id})
+            broken_by_lang[lang] = set(todo)
+            continue
         except KaerisError as e:
             raise RuntimeError(str(e))
         # Don't merge a failed (source-fallback) result — it would poison existing translations
@@ -1117,6 +1175,13 @@ def _translate_file_incremental(client, path, out, languages, keep=None, tone=""
     inc.dump_lock(inc.build_lock(new_keys, final_settings, lang_locks), lock_path)
 
     result = {"written": written, "up_to_date": skipped, "languages": languages}
+    if pending:
+        result["still_running"] = pending
+        result["pending_note"] = (
+            f"{len(pending)} language(s) were still being translated after {_MAX_WAIT}s and "
+            "were NOT merged. Their keys stay pending in kaeris.lock — run the same call again "
+            "and they will be picked up. (Those runs are on the server; a repeat translates "
+            "the same keys again.)")
     if failed:
         result["failed_languages"] = failed
         result["warning"] = f"{len(failed)} language(s) could not be translated and were skipped: {', '.join(failed)}"
