@@ -6,7 +6,9 @@ Exposes AI-native localization tools over the Model Context Protocol so agents
 Auth (optional — the free anonymous tier works up to 10k chars):
   KAERIS_API_KEY         Pro/Scale key (kaerisp_…)
   KAERIS_OPENROUTER_KEY  OpenRouter key for Lifetime/BYOK
-  KAERIS_API_URL         override the API base URL (default https://kaeris.dev)
+  KAERIS_API_URL         override the API base URL (default https://kaeris.dev). Must be
+                         https — over http the key and the strings being translated travel
+                         in the clear; http is accepted for localhost only.
 """
 
 import json
@@ -731,7 +733,13 @@ def kaeris_add_language(
               "a wildlife documentary app". The model uses it to pick the right sense of
               ambiguous strings — "Bank" becomes Ufer in the second and Bank in the first.
               You are reading the repo, so you know this: pass it. Max 300 chars.
-        api_key / openrouter_key: optional auth overrides (else free tier or env vars).
+        api_key / openrouter_key: optional auth overrides. PREFER the KAERIS_API_KEY /
+              KAERIS_OPENROUTER_KEY environment variables: a key passed as a tool argument is
+              written into the conversation transcript and into the MCP client's logs, where
+              it outlives this task. PREFER the KAERIS_API_KEY /
+              KAERIS_OPENROUTER_KEY environment variables: a key passed as a tool argument is
+              written into the conversation transcript and into the MCP client's logs, where
+              it outlives this task.
 
     Returns:
         { "written": ["<out>/<lang>.json"], "lang": "de", "languages": ["de"] }
@@ -816,8 +824,10 @@ def kaeris_translate(
         reuse: optional {lang: {key: previous_translation}} translation-memory map —
                strings that are unchanged from a prior run are reused verbatim
                server-side and only new/changed strings are actually translated.
-        api_key: optional KAERIS key (else uses the free tier or KAERIS_API_KEY env).
-        openrouter_key: optional OpenRouter key for Lifetime/BYOK.
+        api_key / openrouter_key: optional auth overrides. PREFER the KAERIS_API_KEY /
+              KAERIS_OPENROUTER_KEY environment variables: a key passed as a tool argument is
+              written into the conversation transcript and into the MCP client's logs, where
+              it outlives this task.
 
     Returns:
         { "translations": { "<lang>": { "<key>": "<translation>", ... }, ... },
