@@ -23,7 +23,7 @@ audit and understand a repo's i18n before deciding what (if anything) to transla
 
 ## Reproducible by design
 
-`kaeris_translate_file` with `incremental=True` keeps a `kaeris.lock` next to your source file —
+`kaeris_translate_file` with `only_new=True` keeps a `kaeris.lock` next to your source file —
 the same lock the CLI writes, so an agent and a human sharing a repo stay in sync. It records a
 hash of every source string **plus the settings that produced it**: tone, glossary, app context, and the
 model. That means:

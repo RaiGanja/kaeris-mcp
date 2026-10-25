@@ -14,6 +14,7 @@ Auth (optional — the free anonymous tier works up to 10k chars):
 import json
 import os
 import re
+import sys
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -572,16 +573,24 @@ def kaeris_status(source: str, langs: list = None, out: str = "") -> dict:
     six-figure token bill in a single reply. Use kaeris_list_missing_keys (paged) for the full
     picture of one language.
     """
+    # An exception raised here reaches the agent as a bare "Error executing tool
+    # kaeris_status" (the SDK hides the text), so a typo in the path would read as an outage.
+    # Answer with the reason instead.
+    if not os.path.isfile(source):
+        return {"ok": False, "error": f"no such file: {source} — check the path is relative "
+                                      "to the directory the server runs in"}
     out_dir = _resolve_out_dir(source, out)
     target_langs = _resolve_langs(source, langs, out_dir)
     if not target_langs:
-        raise ValueError(
+        return {"ok": False, "error": (
             "No target languages given and none could be discovered — pass langs=[...], "
-            "add a kaeris.json with \"langs\", or place sibling <lang> files next to the source"
-        )
+            "add a kaeris.json with \"langs\", or place sibling <lang> files next to the source")}
 
     client = _client()                 # anonymous is fine — /api/parse needs no auth and costs nothing
-    source_flat = _load_flat(source, client)
+    try:
+        source_flat = _load_flat(source, client)
+    except (OSError, ValueError, KaerisError) as e:
+        return {"ok": False, "error": f"cannot read {source}: {e}"}
     ext = _source_ext(source)          # target locales share the source's format/extension
 
     # Same shape AND the same verdict as chk.check_locales, but in flat space so any parsed
@@ -1197,7 +1206,27 @@ def _translate_file_incremental(client, path, out, languages, keep=None, tone=""
     return result
 
 
+_HELP = f"""kaeris-mcp {__version__} - KAERIS i18n MCP server (stdio)
+
+This program is not run by hand: an MCP client (Claude Desktop, Cursor, Claude Code) starts it
+and talks to it over stdin/stdout. Add it to your client instead:
+
+  claude mcp add kaeris-i18n kaeris-mcp
+  or in the client config: {{"mcpServers": {{"kaeris-i18n": {{"command": "kaeris-mcp"}}}}}}
+
+Optional key for paid plans: env KAERIS_API_KEY. Docs: https://kaeris.dev/mcp-localization.html
+"""
+
+
 def main():
+    # stdout is the protocol channel: print there only when asked, and then do not serve.
+    args = sys.argv[1:]
+    if any(a in ("-h", "--help") for a in args):
+        print(_HELP)
+        return
+    if "--version" in args:
+        print(f"kaeris-mcp {__version__}")
+        return
     mcp.run(transport="stdio")
 
 
