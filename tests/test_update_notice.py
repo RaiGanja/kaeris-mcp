@@ -32,7 +32,7 @@ class UpdateNotice(unittest.TestCase):
     def test_hint_goes_to_stderr_not_stdout(self):
         out, err, seen = self._run()
         self.assertEqual(out, "")
-        self.assertIn(f"A new version of kaeris-mcp is available: {server.__version__} → 9.9.9", err)
+        self.assertIn(f"A new version of kaeris-mcp is available: {server.__version__} -> 9.9.9", err)
         self.assertIn("pip install -U kaeris-mcp", err)
         self.assertEqual(seen["package"], "kaeris-mcp")
         self.assertFalse(seen["require_tty"])  # a client starts us with stderr piped
