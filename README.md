@@ -13,13 +13,14 @@ languages** — placeholder-safe, format-aware, incremental, with built-in Trans
 | `kaeris_scan_repo` | Discover a repo's i18n setup: locale files found, base language, target languages, framework guess (i18next/next-intl/vue-i18n/Flutter/Android/iOS/gettext/generic) | No |
 | `kaeris_status` | Completeness/health per target locale — missing keys, extra keys, placeholder mismatches, plus the quality detectors that gate a merge in CI: number drift, lost inline tags, broken entities/escapes, ICU/CLDR plural gaps (same verdict as `kaeris check --json`) | No |
 | `kaeris_list_missing_keys` | The exact missing/broken keys (with source text) for one target locale, so an agent knows exactly what to fix | No |
-| `kaeris_list_languages` | List all supported target languages | No |
+| `kaeris_list_languages` | List all supported target languages | Yes, free (no quota) |
 | `kaeris_translate` | Translate inline strings → per-language results, with QA (placeholder-loss & UI-overflow flags; `verify=True` back-translates to check meaning) | Yes |
-| `kaeris_translate_file` | Translate a file on disk (JSON/YAML/.strings/.po/ARB/XML/CSV/XLIFF/.properties/.resx/.ftl), optional incremental — reproducible via `kaeris.lock` | Yes |
+| `kaeris_translate_file` | Translate a file on disk (JSON/YAML/.strings/.xcstrings/.po/ARB/XML/CSV/XLIFF/.properties/.resx/.ftl/Markdown), optional incremental — reproducible via `kaeris.lock` | Yes |
 | `kaeris_add_language` | Bootstrap a brand-new target locale by translating the whole source file into it | Yes |
 
-The first four tools are local-only (no network call, no cost) — an agent can use them freely to
-audit and understand a repo's i18n before deciding what (if anything) to translate.
+The first three tools are local-only (no network call, no cost), and `kaeris_list_languages` is one
+free API call that counts toward no limit — an agent can use all four freely to audit and
+understand a repo's i18n before deciding what (if anything) to translate.
 
 ## Reproducible by design
 
@@ -53,7 +54,7 @@ docker run -i --rm -v "$PWD:/work" -w /work kaeris-mcp
 The server speaks JSON-RPC over stdin/stdout, so there is no port to expose —
 `-i` is what keeps the conversation open. Mount your project at `/work` and the
 repo-aware tools (`scan_repo`, `status`, `list_missing_keys`) read it directly;
-pass `-e KAERIS_API_KEY=…` for the paid tiers.
+pass `-e KAERIS_API_KEY=…` to use your KAERIS key.
 
 ## Configure your client
 
@@ -66,7 +67,7 @@ pass `-e KAERIS_API_KEY=…` for the paid tiers.
     "kaeris-i18n": {
       "command": "kaeris-mcp",
       "env": {
-        "KAERIS_API_KEY": "kaerisp_optional_for_pro_team"
+        "KAERIS_API_KEY": "kaerisp_optional"
       }
     }
   }
@@ -91,7 +92,7 @@ Restart the client; the KAERIS tools appear automatically.
 
 | Env var | Purpose |
 |---------|---------|
-| `KAERIS_API_KEY` | Paid key (Pro or Team/API) — higher limits (else the free 10k-char tier is used) |
+| `KAERIS_API_KEY` | Your KAERIS key: the free API key (50k chars/file), Pro, Team/API or Lifetime — higher limits (without one, the free 10k-char tier is used) |
 | `KAERIS_OPENROUTER_KEY` | OpenRouter key for Lifetime/BYOK — no monthly volume cap |
 | `KAERIS_API_URL` | Override the API base URL |
 
