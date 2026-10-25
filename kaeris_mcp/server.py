@@ -4,7 +4,7 @@ Exposes AI-native localization tools over the Model Context Protocol so agents
 (Claude Desktop, Cursor, Claude Code, …) can translate app strings on demand.
 
 Auth (optional — the free anonymous tier works up to 10k chars):
-  KAERIS_API_KEY         Pro/Scale key (kaerisp_…)
+  KAERIS_API_KEY         paid KAERIS key — Pro or Team/API (kaerisp_…)
   KAERIS_OPENROUTER_KEY  OpenRouter key for Lifetime/BYOK
   KAERIS_API_URL         override the API base URL (default https://kaeris.dev). Must be
                          https — over http the key and the strings being translated travel

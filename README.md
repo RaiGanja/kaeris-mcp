@@ -91,7 +91,7 @@ Restart the client; the KAERIS tools appear automatically.
 
 | Env var | Purpose |
 |---------|---------|
-| `KAERIS_API_KEY` | Pro/Scale key — higher limits (else the free 10k-char tier is used) |
+| `KAERIS_API_KEY` | Paid key (Pro or Team/API) — higher limits (else the free 10k-char tier is used) |
 | `KAERIS_OPENROUTER_KEY` | OpenRouter key for Lifetime/BYOK — no monthly volume cap |
 | `KAERIS_API_URL` | Override the API base URL |
 
