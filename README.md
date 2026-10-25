@@ -95,6 +95,7 @@ Restart the client; the KAERIS tools appear automatically.
 | `KAERIS_API_KEY` | Your KAERIS key: the free API key (50k chars/file), Pro, Team/API or Lifetime — higher limits (without one, the free 10k-char tier is used) |
 | `KAERIS_OPENROUTER_KEY` | OpenRouter key for Lifetime/BYOK — no monthly volume cap |
 | `KAERIS_API_URL` | Override the API base URL |
+| `KAERIS_NO_UPDATE_CHECK` | Set to `1` to turn off the once-a-day "new version available" line (stderr only; already off in CI) |
 
 No key is required to try it — the free anonymous tier works out of the box.
 

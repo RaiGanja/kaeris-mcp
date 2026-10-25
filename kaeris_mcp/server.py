@@ -1292,6 +1292,24 @@ Optional key for paid plans: env KAERIS_API_KEY. Docs: https://kaeris.dev/mcp-lo
 """
 
 
+def _update_hint(wait=False):
+    """Once a day, tell on stderr (never stdout: that is the protocol) if PyPI has a newer kaeris-mcp.
+
+    Runs in a thread so the server starts at once; every failure is silent. A client starts us
+    with stderr piped, so the terminal test the CLI uses would silence it for good."""
+    def run():
+        try:
+            from kaeris import updatecheck
+            updatecheck.maybe_notify("kaeris-mcp", __version__, stream=sys.stderr, require_tty=False)
+        except Exception:
+            pass
+    if wait:
+        run()
+        return
+    import threading
+    threading.Thread(target=run, daemon=True).start()
+
+
 def main():
     # stdout is the protocol channel: print there only when asked, and then do not serve.
     args = sys.argv[1:]
@@ -1301,6 +1319,7 @@ def main():
     if "--version" in args:
         print(f"kaeris-mcp {__version__}")
         return
+    _update_hint()
     mcp.run(transport="stdio")
 
 
