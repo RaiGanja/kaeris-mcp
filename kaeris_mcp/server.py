@@ -80,6 +80,30 @@ _LOCALE_EXTS = {".json", ".yaml", ".yml", ".arb", ".strings", ".po", ".xml", ".c
 _CATALOG_EXTS = {".xcstrings"}
 # A bare language/locale code: en, de, en-US, en_US, zh-Hans, pt-BR, ...
 _LANG_RE = re.compile(r"^[a-zA-Z]{2,3}([_-][a-zA-Z]{2,4})?$")
+# A folder or file name has the SHAPE of a language tag far more often than it is one: src, api,
+# app, doc, ui. The shape is only taken as a language when its primary subtag is a real one
+# (ISO 639-1, plus the few three-letter codes locale files use).
+_LANG_BASES = frozenset((
+    "aa", "ab", "ae", "af", "ak", "am", "an", "ar", "as", "av", "ay", "az", "ba", "be", "bg",
+    "bh", "bi", "bm", "bn", "bo", "br", "bs", "ca", "ce", "ch", "co", "cr", "cs", "cu", "cv",
+    "cy", "da", "de", "dv", "dz", "ee", "el", "en", "eo", "es", "et", "eu", "fa", "ff", "fi",
+    "fj", "fo", "fr", "fy", "ga", "gd", "gl", "gn", "gu", "gv", "ha", "he", "hi", "ho", "hr",
+    "ht", "hu", "hy", "hz", "ia", "id", "ie", "ig", "ii", "ik", "io", "is", "it", "iu", "ja",
+    "jv", "ka", "kg", "ki", "kj", "kk", "kl", "km", "kn", "ko", "kr", "ks", "ku", "kv", "kw",
+    "ky", "la", "lb", "lg", "li", "ln", "lo", "lt", "lu", "lv", "mg", "mh", "mi", "mk", "ml",
+    "mn", "mr", "ms", "mt", "my", "na", "nb", "nd", "ne", "ng", "nl", "nn", "no", "nr", "nv",
+    "ny", "oc", "oj", "om", "or", "os", "pa", "pi", "pl", "ps", "pt", "qu", "rm", "rn", "ro",
+    "ru", "rw", "sa", "sc", "sd", "se", "sg", "si", "sk", "sl", "sm", "sn", "so", "sq", "sr",
+    "ss", "st", "su", "sv", "sw", "ta", "te", "tg", "th", "ti", "tk", "tl", "tn", "to", "tr",
+    "ts", "tt", "tw", "ty", "ug", "uk", "ur", "uz", "ve", "vi", "vo", "wa", "wo", "xh", "yi",
+    "yo", "za", "zh", "zu", "fil", "yue", "cmn", "ast", "ceb", "gsw", "haw", "hsb", "dsb",
+    "kab", "ckb", "nds", "zgh", "tzm", "sah", "fur", "scn"
+))
+
+
+def _is_lang_tag(tag):
+    """True when `tag` is a language code (de, pt-BR, zh_Hant), not just a short name."""
+    return bool(_LANG_RE.match(tag)) and re.split(r"[_-]", tag)[0].lower() in _LANG_BASES
 _PREFERRED_BASE = ("en", "en-us", "en_us")
 
 _MAX_SCAN_ENTRIES = 20000  # bound total files visited
@@ -124,7 +148,7 @@ def _classify_locale_file(root, dirpath, name):
     elif ext == ".po" and parent == "LC_MESSAGES":
         # gettext: locale/de/LC_MESSAGES/messages.po
         grandparent = os.path.basename(os.path.dirname(dirpath))
-        lang = grandparent if _LANG_RE.match(grandparent) else None
+        lang = grandparent if _is_lang_tag(grandparent) else None
     elif ext == ".arb":
         # Flutter ARB: app_en.arb / app_en_US.arb — the locale is everything AFTER the app
         # prefix (split on the FIRST underscore, so app_en_US -> en_US, not US). A bare en.arb
@@ -132,16 +156,16 @@ def _classify_locale_file(root, dirpath, name):
         # read "app_en" itself as a locale.
         if "_" in stem:
             cand = stem.split("_", 1)[1]
-            lang = cand if _LANG_RE.match(cand) else (stem if _LANG_RE.match(stem) else None)
-        elif _LANG_RE.match(stem):
+            lang = cand if _is_lang_tag(cand) else (stem if _is_lang_tag(stem) else None)
+        elif _is_lang_tag(stem):
             lang = stem
-    elif _LANG_RE.match(stem):
+    elif _is_lang_tag(stem):
         # locales/en.json, messages/pt-BR.json, ...
         lang = stem
-    elif "_" in stem and _LANG_RE.match(stem.rsplit("_", 1)[-1]):
+    elif "_" in stem and _is_lang_tag(stem.rsplit("_", 1)[-1]):
         # <name>_<lang> style for other formats: messages_en.properties
         lang = stem.rsplit("_", 1)[-1]
-    elif _LANG_RE.match(parent):
+    elif _is_lang_tag(parent):
         # i18next-style namespace file inside a lang-named dir: locales/en/translation.json
         lang = parent
 
@@ -282,12 +306,12 @@ def _target_locale_path(source, lang, out_dir, member_name):
 
     if beside_source:
         # i18next / vue-i18n: the source's PARENT dir is its language code.
-        if ext in (".json", ".yaml", ".yml") and _LANG_RE.match(parent):
+        if ext in (".json", ".yaml", ".yml") and _is_lang_tag(parent):
             return os.path.join(os.path.dirname(src_dir) or ".", lang, base_name)
         # Flutter ARB with an app-prefix: app_<base>.arb -> app_<lang>.arb.
         if ext == ".arb" and "_" in stem:
             prefix, _sep, langish = stem.partition("_")
-            if _LANG_RE.match(langish):
+            if _is_lang_tag(langish):
                 return os.path.join(src_dir or ".", f"{prefix}_{lang}{ext}")
 
     # The member name comes off the wire, so it is built into a path from sanitized segments
@@ -316,7 +340,7 @@ def _discover_locale_langs(source, out_dir):
         if name == base_name or not name.endswith(ext):
             continue
         stem = name[: -len(ext)]
-        if stem and _LANG_RE.match(stem):
+        if stem and _is_lang_tag(stem):
             langs.append(stem)
     return langs
 
@@ -341,6 +365,19 @@ def _load_kaeris_config(source):
                 return {k: v for k, v in raw.items() if not k.startswith("//") and not k.startswith("_")}
             return {}
     return {}
+
+
+def _existing_target_path(source, lang, out_dir, ext):
+    """Where an EXISTING `lang` translation of `source` is read from (status, list_missing).
+
+    The expected spot is _target_locale_path; a project that keeps one folder per language
+    under a custom out ("<out>/de/<source name>") is read there too, instead of being reported
+    as a missing language when the file is plainly on disk. Writing is not affected."""
+    expected = _target_locale_path(source, lang, out_dir, f"{lang}{ext}")
+    if os.path.isfile(expected):
+        return expected
+    per_language = os.path.join(out_dir, lang, os.path.basename(source))
+    return per_language if os.path.isfile(per_language) else expected
 
 
 def _resolve_langs(source, langs, out_dir):
@@ -476,6 +513,30 @@ def _still_running(job, extra=None):
     return body
 
 
+def _unknown_langs(client, langs):
+    """Target codes the API does not offer, found before anything is sent or charged.
+
+    Only the primary subtag is compared (pt-BR is fine when pt is offered), so a regional
+    spelling the server accepts is never refused here. If the list cannot be fetched nothing
+    is refused: the server still answers for itself."""
+    try:
+        known = client.languages()
+    except Exception:
+        return []
+    if not isinstance(known, dict) or not known:
+        return []
+    bases = {str(c).replace("_", "-").split("-")[0].lower() for c in known}
+    return [str(l) for l in langs if re.split(r"[-_]", str(l).strip())[0].lower() not in bases]
+
+
+def _unknown_langs_reply(unknown):
+    """What the agent is told. An exception here would reach it as a bare "Error executing
+    tool", so the reason travels in the return value."""
+    return {"ok": False, "error": (
+        f"Unknown language code: {', '.join(unknown)} — call kaeris_list_languages for the valid "
+        "codes (de, ja, pt-BR, zh-Hant …). Nothing was sent and nothing was charged.")}
+
+
 def _client(api_key="", openrouter_key=""):
     return KaerisClient(
         api_url=os.environ.get("KAERIS_API_URL", "https://kaeris.dev"),
@@ -601,7 +662,7 @@ def kaeris_status(source: str, langs: list = None, out: str = "") -> dict:
     result = {"ok": True, "missing": {}, "extra": {}, "placeholder_issues": [],
               "missing_files": [], "faults": [], "warnings": []}
     for lang in target_langs:
-        target_path = _target_locale_path(source, lang, out_dir, f"{lang}{ext}")
+        target_path = _existing_target_path(source, lang, out_dir, ext)
         try:
             target_flat = _load_flat(target_path, client)
         except (FileNotFoundError, ValueError, KaerisError):
@@ -715,7 +776,7 @@ def kaeris_list_missing_keys(source: str, lang: str, out: str = "",
     source_flat = _load_flat(source, client)
     ext = _source_ext(source)          # target locale shares the source's format/extension
 
-    target_path = _target_locale_path(source, lang, out_dir, f"{lang}{ext}")
+    target_path = _existing_target_path(source, lang, out_dir, ext)
     if not os.path.isfile(target_path):
         keys = sorted(source_flat)
         page, info = _page_keys(keys, source_flat, offset, limit)
@@ -803,9 +864,12 @@ def kaeris_add_language(
         raise ValueError("`lang` is required")
 
     out_dir = _resolve_out_dir(source, out)
-    os.makedirs(out_dir, exist_ok=True)
     fname = os.path.basename(source)
     client = _client(api_key, openrouter_key)
+    unknown = _unknown_langs(client, [lang])
+    if unknown:
+        return _unknown_langs_reply(unknown)
+    os.makedirs(out_dir, exist_ok=True)
 
     with open(source, "rb") as f:
         content = f.read()
@@ -899,6 +963,9 @@ def kaeris_translate(
         raise ValueError("`target_languages` is empty")
 
     client = _client(api_key, openrouter_key)
+    unknown = _unknown_langs(client, target_languages)
+    if unknown:
+        return _unknown_langs_reply(unknown)
     content = json.dumps(strings, ensure_ascii=False).encode()
     job = (job_id or "").strip()
     try:
@@ -1006,9 +1073,12 @@ def kaeris_translate_file(
         raise ValueError("`target_languages` is empty")
 
     out = out_dir or os.path.dirname(os.path.abspath(file_path))
-    os.makedirs(out, exist_ok=True)
     fname = os.path.basename(file_path)
     client = _client(api_key, openrouter_key)
+    unknown = _unknown_langs(client, target_languages)
+    if unknown:
+        return _unknown_langs_reply(unknown)
+    os.makedirs(out, exist_ok=True)
 
     only_new_note = ""
     if only_new:
