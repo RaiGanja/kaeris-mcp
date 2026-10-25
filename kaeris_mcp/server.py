@@ -627,6 +627,10 @@ def kaeris_status(source: str, langs: list = None, out: str = "") -> dict:
             tgt_val = target_flat.get(key)
             if not isinstance(src_val, str) or not isinstance(tgt_val, str):
                 continue
+            if src_val.strip() and not tgt_val.strip():
+                result["warnings"].append({"lang": lang, "key": key, "severity": "warn",
+                                           "msg": "empty translation — the source has text"})
+                continue
             for f in det.string_faults(src_val, tgt_val, lang, None):
                 rec = {"lang": lang, "key": key, "msg": f["msg"]}
                 if f["severity"] == det.ERROR:
