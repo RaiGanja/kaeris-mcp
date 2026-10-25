@@ -39,7 +39,7 @@ class FakeClient:
         FakeClient.calls.append({"content": content, "languages": list(languages)})
         return f"job-{len(FakeClient.calls)}"
 
-    def poll(self, job_id):
+    def poll(self, job_id, **kw):
         return {"status": "done", "failed_langs": []}
 
     def download(self, job_id):
@@ -60,14 +60,16 @@ class TestMcpIncrementalReproducible(unittest.TestCase):
     def test_edited_source_key_retranslated_via_lock(self):
         with tempfile.TemporaryDirectory() as d:
             en = os.path.join(d, "en.json")
-            de = os.path.join(d, "de.json")
             _write(en, {"a": "Hello", "b": "Bye"})
-            _write(de, {"a": "Hola", "b": "Adios"})     # already complete
 
-            # First run: target complete, no lock yet -> nothing to translate, but a lock is written.
+            # First run: no target yet, so the whole locale is translated — and THAT is what
+            # puts an honest baseline in the lock. (Until 16.08.2026 this test started from a
+            # ready-made de.json with no lock and expected the next run to retranslate the
+            # edited key. It did — by stamping translations nothing vouched for as current,
+            # which is the very damage the CLI's unverified-keys guard exists to prevent. The
+            # parity test with the CLI covers that case now.)
             r1 = s._translate_file_incremental(FakeClient(), en, d, ["de"])
-            self.assertIn("de", r1["up_to_date"])
-            self.assertFalse(r1["written"])
+            self.assertTrue(r1["written"])
             self.assertTrue(os.path.isfile(os.path.join(d, "kaeris.lock")))
 
             # Edit ONE source string; a re-run must retranslate only that key (missing_keys missed this).
