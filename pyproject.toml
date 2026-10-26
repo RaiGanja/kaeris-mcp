@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kaeris-mcp"
-version = "0.2.13"
+version = "0.2.15"
 description = "MCP server for KAERIS i18n — AI-native localization for Claude Desktop, Cursor & agents"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -24,8 +24,10 @@ classifiers = [
     "Topic :: Software Development :: Internationalization",
 ]
 dependencies = [
-    "mcp>=1.2",
-    "kaeris>=0.2.29",
+    # Both SDK generations work (the import falls back to 2.x), a third is untested: 2.x
+    # already changed what reaches the agent on a failure (R25).
+    "mcp>=1.2,<3",
+    "kaeris>=0.2.31",
 ]
 
 [project.urls]

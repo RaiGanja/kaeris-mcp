@@ -23,6 +23,15 @@ except ImportError:  # MCP SDK >= 2.0 renamed FastMCP to MCPServer and moved it
     # rest of this file is version-agnostic. Without this, `pip install kaeris-mcp` in a
     # fresh environment resolves to the newest SDK and dies on this import.
     from mcp.server.mcpserver import MCPServer as FastMCP
+try:
+    from mcp.server.mcpserver.exceptions import ToolError
+except ImportError:
+    try:
+        from mcp.server.fastmcp.exceptions import ToolError
+    except ImportError:
+        ToolError = RuntimeError
+
+import functools
 
 from kaeris.client import KaerisClient, KaerisError, KaerisTimeout, safe_member_name
 from kaeris import check as chk
@@ -57,6 +66,35 @@ def _build_server():
 
 
 mcp = _build_server()
+
+
+def _say_why(fn):
+    """SDK 2.x passes on the text of a ToolError only; any other exception reached the agent
+    as a bare "Error executing tool <name>", so a wrong path or a broken JSON read like an
+    outage (R25). Every tool failure is handed over as a ToolError carrying its reason."""
+    @functools.wraps(fn)
+    def run(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except ToolError:
+            raise
+        except Exception as e:
+            reason = str(e) or type(e).__name__
+            if isinstance(e, FileNotFoundError) and e.args and str(e.args[0]) == reason:
+                reason = f"no such file: {reason}"
+            raise ToolError(reason) from e
+    return run
+
+
+_register_tool = mcp.tool
+
+
+def _tool(*args, **kwargs):
+    register = _register_tool(*args, **kwargs)
+    return lambda fn: register(_say_why(fn))
+
+
+mcp.tool = _tool
 
 # ---------------------------------------------------------------------------
 # Shared helpers for the local (no-API) repo-aware tools: kaeris_scan_repo,
@@ -303,6 +341,17 @@ def _target_locale_path(source, lang, out_dir, member_name):
     stem = base_name[: -len(ext)] if ext else base_name
     parent = os.path.basename(src_dir)
     beside_source = os.path.abspath(out_dir) == os.path.abspath(src_dir or ".")
+
+    if ext in (".md", ".mdx", ".markdown"):
+        # One document per page, so the page keeps its name and the language is a folder —
+        # as the CLI writes it. The member is just "<lang>.md": two pages in one run used to
+        # overwrite each other inside the source folder (R24).
+        if beside_source and _is_lang_tag(parent):
+            dest = os.path.join(os.path.dirname(src_dir) or ".", lang, base_name)
+        else:
+            dest = os.path.join(out_dir, lang, base_name)
+        _refuse_outside_project(dest, out_dir)
+        return dest
 
     if beside_source:
         # i18next / vue-i18n: the source's PARENT dir is its language code.
@@ -936,7 +985,8 @@ def kaeris_translate(
               "a wildlife documentary app". The model uses it to pick the right sense of
               ambiguous strings — "Bank" becomes Ufer in the second and Bank in the first.
               You are reading the repo, so you know this: pass it. Max 300 chars.
-        verify: back-translate each result into back_lang to confirm meaning (uses more tokens).
+        verify: back-translation and meaning check for your review — back-translates into
+              back_lang and flags lines whose meaning may have changed (uses more tokens).
         back_lang: language for the verify back-translation (default "en").
         tone: "formal" or "casual" to steer register; "" (default) is neutral.
         icu: True if values may contain ICU MessageFormat (plurals/select) so the
@@ -951,9 +1001,13 @@ def kaeris_translate(
 
     Returns:
         { "translations": { "<lang>": { "<key>": "<translation>", ... }, ... },
-          "placeholder_warnings": { "<lang>": { "<key>": ["{name}", ...] } },  # if any placeholders were lost
+          "placeholder_warnings": { "<lang>": { "<key>": ["{name}", ...] } },  # may break your app: placeholders, ICU, tags
+          "meaning_warnings":     { "<lang>": { "<key>": ["number 5 ..."] } },  # check the meaning: numbers, currency, untranslated
           "overflow_warnings":   { "<lang>": [ {"key","src","tr","pct"}, ... ] },  # if UI-overflow risk
           "back_translations":   { "<lang>": { "<key>": "<back-translation>" } },  # only if verify=True
+          "meaning_flags":       { "<lang>": { "<key>": {"verdict", "issue", "explain", "fix"} } },  # verify=True
+          "review": { "<lang>": {"error": [...], "review": [...], "unchecked": [...]} },  # verify=True
+          "lines_to_review": 3,                                                   # verify=True
           "failed_languages": [...]  # present only if some languages could not be translated
         }
     """
@@ -996,15 +1050,19 @@ def kaeris_translate(
     # Translation QA — placeholder loss + UI-overflow (free), back-translation if verify.
     try:
         prev = client.preview(job)
-        warnings = prev.get("_warnings") or {}
+        breaks, meaning_warnings = _split_warnings(prev.get("_warnings"))
         overflow = {l: v["overflow"] for l, v in (prev.get("_qa") or {}).items() if v.get("overflow")}
         back = prev.get("_back") or {}
-        if warnings:
-            result["placeholder_warnings"] = warnings
+        if breaks:
+            result["placeholder_warnings"] = breaks
+        if meaning_warnings:
+            result["meaning_warnings"] = meaning_warnings
         if overflow:
             result["overflow_warnings"] = overflow
         if verify and back:
             result["back_translations"] = back
+        if verify:
+            result.update(_verify_report(prev))
     except KaerisError:
         pass  # QA is best-effort — never fail the translation over it
 
@@ -1054,7 +1112,8 @@ def kaeris_translate_file(
               "a wildlife documentary app". The model uses it to pick the right sense of
               ambiguous strings — "Bank" becomes Ufer in the second and Bank in the first.
               You are reading the repo, so you know this: pass it. Max 300 chars.
-        verify: back-translate each result into back_lang to confirm meaning (non-incremental only).
+        verify: back-translation and meaning check for your review; with only_new the
+                result carries them as "back_translations".
         back_lang: language for the verify back-translation (default "en").
         tone: "formal" or "casual" to steer register; "" (default) is neutral.
         icu: True if values may contain ICU MessageFormat (plurals/select) so the
@@ -1084,7 +1143,8 @@ def kaeris_translate_file(
     if only_new:
         if fname.lower().endswith((".json", ".arb")):
             return _translate_file_incremental(client, file_path, out, target_languages, keep or [],
-                                               tone=tone, icu=icu, context=context)
+                                               tone=tone, icu=icu, context=context,
+                                               verify=verify, back_lang=back_lang)
         # Silence here billed the client for the WHOLE file after they asked for the delta —
         # and the agent reported plain success. The CLI says this out loud; so do we.
         only_new_note = (
@@ -1118,6 +1178,14 @@ def kaeris_translate_file(
             f.write(data)
         written.append(dest)
     result = {"written": written, "languages": target_languages}
+    if verify:
+        try:
+            prev = client.preview(job)
+            if prev.get("_back"):
+                result["back_translations"] = prev["_back"]
+            result.update(_verify_report(prev))
+        except KaerisError:
+            pass  # QA is best-effort — never fail the translation over it
     if only_new_note:
         result["note"] = only_new_note
     failed = status.get("failed_langs") or []
@@ -1125,6 +1193,30 @@ def kaeris_translate_file(
         result["failed_languages"] = failed
         result["warning"] = f"{len(failed)} language(s) returned source text (not translated): {', '.join(failed)}"
     return result
+
+
+def _split_warnings(warnings):
+    """The server's findings in two groups, as the CLI prints them (X2): what may break the
+    app, and what may only read wrong (numbers, prices, untranslated)."""
+    groups = {"break": {}, "meaning": {}}
+    for lang, kv in (warnings or {}).items():
+        for k, found in kv.items():
+            for f in found:
+                groups[det.warning_group(f)].setdefault(lang, {}).setdefault(k, []).append(f)
+    return groups["break"], groups["meaning"]
+
+
+def _verify_report(prev):
+    """What the meaning check found, per line and per file (U1, U3)."""
+    out = {}
+    meaning = prev.get("_meaning") or {}
+    review = prev.get("_review") or {}
+    if meaning:
+        out["meaning_flags"] = meaning
+    if review:
+        out["review"] = review
+        out["lines_to_review"] = sum(r.get("to_review", 0) for r in review.values())
+    return out
 
 
 def _arb_meta_key(flat_key):
@@ -1135,7 +1227,7 @@ def _arb_meta_key(flat_key):
 
 
 def _translate_file_incremental(client, path, out, languages, keep=None, tone="", icu=False,
-                                context=""):
+                                context="", verify=False, back_lang="en"):
     """Delta translation with the SAME rules as `kaeris translate --only-new`.
 
     This used to be a simplified copy of the CLI's incremental path, and the copy fell three
@@ -1172,6 +1264,8 @@ def _translate_file_incremental(client, path, out, languages, keep=None, tone=""
     settings_changed = inc.settings_changed(locked_settings, cur_settings)
 
     written, skipped, failed, pending = [], [], [], []
+    back = {}
+    meaning_all, review_all = {}, {}
     broken = set()
     broken_by_lang = {}
     unverified_by_lang = {}
@@ -1195,7 +1289,8 @@ def _translate_file_incremental(client, path, out, languages, keep=None, tone=""
         content = json.dumps(subset, ensure_ascii=False).encode()
         try:
             job = client.submit(os.path.basename(path), content, [lang], keep or [],
-                                tone=tone, icu=icu, app_context=context)
+                                tone=tone, icu=icu, app_context=context,
+                                verify=verify, back_lang=back_lang)
             status = _await(client, job)
             members = client.download(job)
         except KaerisTimeout as e:
@@ -1219,7 +1314,16 @@ def _translate_file_incremental(client, path, out, languages, keep=None, tone=""
         if translated is None:
             broken_by_lang[lang] = set(todo)
             continue
-        merged = inc.merge_translation(existing, translated)
+        if verify:
+            try:
+                prev = client.preview(job)
+                back.update(prev.get("_back") or {})
+                for lang_, kv in (prev.get("_meaning") or {}).items():
+                    meaning_all.setdefault(lang_, {}).update(kv)
+                review_all.update(prev.get("_review") or {})
+            except KaerisError:
+                pass
+        merged = inc.merge_translation(existing, translated, source_obj)
         if is_arb:
             merged["@@locale"] = lang       # stamp the target locale on the written ARB
         inc.dump_json(merged, target_path)
@@ -1258,6 +1362,10 @@ def _translate_file_incremental(client, path, out, languages, keep=None, tone=""
     inc.dump_lock(inc.build_lock(new_keys, final_settings, lang_locks), lock_path)
 
     result = {"written": written, "up_to_date": skipped, "languages": languages}
+    if back:
+        result["back_translations"] = back
+    if verify:
+        result.update(_verify_report({"_meaning": meaning_all, "_review": review_all}))
     if pending:
         result["still_running"] = pending
         result["pending_note"] = (

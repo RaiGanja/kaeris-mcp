@@ -6,7 +6,7 @@
 #
 #   docker build -t kaeris-mcp .
 #   docker run -i --rm kaeris-mcp                      # anonymous free tier
-#   docker run -i --rm -e KAERIS_API_KEY=… kaeris-mcp  # Pro/Scale
+#   docker run -i --rm -e KAERIS_API_KEY=… kaeris-mcp  # Pro or Team/API
 #   docker run -i --rm -v "$PWD:/work" -w /work kaeris-mcp   # to see your repo
 #
 # The four repo-aware tools (scan_repo, status, list_missing_keys,
@@ -18,9 +18,9 @@ FROM python:3.12-slim
 # Deps first: this layer only rebuilds when the dependency set changes, not on
 # every source edit. No compiler needed — both packages are pure Python.
 # The install below is --no-deps, so THIS line decides the versions in the image.
-# kaeris>=0.2.11 is what the server needs to send the app context; mcp>=1.2 covers
+# kaeris>=0.2.31 carries the array-aware delta and the warning split the server relies on; mcp>=1.2,<3 covers
 # both SDK generations (the import falls back to 2.x's new location).
-RUN pip install --no-cache-dir "kaeris>=0.2.11" "mcp>=1.2"
+RUN pip install --no-cache-dir "kaeris>=0.2.31" "mcp>=1.2,<3"
 
 WORKDIR /src
 COPY pyproject.toml README.md ./
