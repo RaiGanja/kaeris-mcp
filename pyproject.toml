@@ -33,8 +33,8 @@ dependencies = [
 [project.urls]
 Homepage = "https://kaeris.dev"
 Documentation = "https://kaeris.dev/mcp-localization.html"
-Repository = "https://github.com/RaiGanja/kaeris-mcp"
-Issues = "https://github.com/RaiGanja/kaeris-mcp/issues"
+Repository = "https://github.com/kaeris-io/kaeris-mcp"
+Issues = "https://github.com/kaeris-io/kaeris-mcp/issues"
 
 [project.scripts]
 kaeris-mcp = "kaeris_mcp.server:main"
