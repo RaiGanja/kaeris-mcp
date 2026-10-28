@@ -2,6 +2,8 @@
 
 # KAERIS i18n — MCP Server
 
+<!-- mcp-name: io.github.kaeris-io/kaeris-mcp -->
+
 AI-native localization over the **Model Context Protocol**. Give Claude Desktop, Cursor,
 Claude Code (or any MCP client) the ability to translate your app's strings into **46
 languages** — placeholder-safe, format-aware, incremental, with built-in Translation QA.
@@ -92,12 +94,12 @@ Restart the client; the KAERIS tools appear automatically.
 
 | Env var | Purpose |
 |---------|---------|
-| `KAERIS_API_KEY` | Your KAERIS key: the free API key (50k chars/file), Pro, Team/API or Lifetime — higher limits (without one, the free 10k-char tier is used) |
+| `KAERIS_API_KEY` | Your KAERIS key, e.g. the free API key from [kaeris.dev/docs/key](https://kaeris.dev/docs/key) (50k chars/file, no account) — without one, the free 10k-char demo is used |
 | `KAERIS_OPENROUTER_KEY` | OpenRouter key for Lifetime/BYOK — no monthly volume cap |
 | `KAERIS_API_URL` | Override the API base URL |
 | `KAERIS_NO_UPDATE_CHECK` | Set to `1` to turn off the once-a-day "new version available" line (stderr only; already off in CI) |
 
-No key is required to try it — the free anonymous tier works out of the box.
+No key is required to try it — the free demo works out of the box.
 
 ## Example prompts
 
