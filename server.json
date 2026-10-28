@@ -1,0 +1,40 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.kaeris-io/kaeris-mcp",
+  "title": "KAERIS i18n",
+  "description": "Translate app language files into 46 languages and check placeholders, plurals and missing keys.",
+  "repository": {
+    "url": "https://github.com/kaeris-io/kaeris-mcp",
+    "source": "github"
+  },
+  "websiteUrl": "https://kaeris.dev/mcp-localization.html",
+  "version": "0.2.16",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "kaeris-mcp",
+      "version": "0.2.16",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "KAERIS_API_KEY",
+          "description": "KAERIS API key (optional; the free demo works without one)",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "KAERIS_OPENROUTER_KEY",
+          "description": "OpenRouter key for the Lifetime (BYOK) plan (optional)",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}
