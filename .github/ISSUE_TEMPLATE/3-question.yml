@@ -1,0 +1,21 @@
+name: Question
+description: How do I do something with KAERIS?
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The docs at https://kaeris.dev/docs answer most setup questions.
+        Do not paste API keys. Replace them with `kaerisp_xxx`.
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What you want to do and what you have tried.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Optional. Output of the version command or the action tag.

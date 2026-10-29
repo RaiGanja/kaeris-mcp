@@ -1,12 +1,35 @@
 <img src="https://kaeris.dev/icon-512.png" alt="KAERIS" width="72" align="left" style="margin-right:16px" />
 
-# KAERIS i18n — MCP Server
+# KAERIS MCP server
 
 <!-- mcp-name: io.github.kaeris-io/kaeris-mcp -->
 
-AI-native localization over the **Model Context Protocol**. Give Claude Desktop, Cursor,
-Claude Code (or any MCP client) the ability to translate your app's strings into **46
-languages** — placeholder-safe, format-aware, incremental, with built-in Translation QA.
+Lets Claude Desktop, Claude Code, Cursor or any MCP client check your app's locale files and
+translate them into **46 languages**.
+
+[![PyPI](https://img.shields.io/pypi/v/kaeris-mcp)](https://pypi.org/project/kaeris-mcp/)
+[![license](https://img.shields.io/github/license/kaeris-io/kaeris-mcp)](LICENSE)
+
+```bash
+pip install kaeris-mcp && claude mcp add kaeris-i18n kaeris-mcp
+```
+
+- Three tools work offline with no key: find the locale files in a repo, report missing keys
+  and broken placeholders per language, list the exact keys to fix.
+- Translation keeps placeholders and markup, translates only new keys with `only_new`, and
+  with `verify=True` translates each line back to flag a changed meaning.
+- **13 formats**: JSON, YAML, `.strings`, `.xcstrings`, `.po`, ARB, Android XML, CSV, XLIFF,
+  `.properties`, `.resx`, Fluent `.ftl`, Markdown.
+- Same engine and `kaeris.lock` as the [CLI](https://github.com/kaeris-io/kaeris-cli), so an
+  agent, a teammate and CI agree on what is already translated.
+
+**Plans.** No key needed to try it. Free API key: 50k characters per file, 8 languages per run.
+Pro $19/month with 12M characters, Team/API $79/month with 60M, Lifetime $79 once with your own
+OpenRouter key. See [kaeris.dev/pricing](https://kaeris.dev/pricing.html).
+
+[Docs](https://kaeris.dev/docs/mcp) · [Pricing](https://kaeris.dev/pricing.html) ·
+[Discussions](https://github.com/kaeris-io/kaeris-cli/discussions) ·
+[Status](https://kaeris.dev/status.html) · [Security](SECURITY.md)
 
 ## Tools
 

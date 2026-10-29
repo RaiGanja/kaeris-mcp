@@ -1,0 +1,68 @@
+name: Bug report
+description: Something does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security problems go to support@kaeris.dev, not here (see SECURITY.md).
+        Do not paste API keys. Replace them with `kaerisp_xxx`.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "Output of pip show kaeris-mcp, and the MCP client you use."
+      placeholder: "kaeris-mcp 0.2.17, Claude Desktop"
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Python or Node version, and where it ran (terminal, CI, MCP client).
+      placeholder: "Ubuntu 24.04, Python 3.12, GitHub Actions"
+    validations:
+      required: true
+  - type: dropdown
+    id: format
+    attributes:
+      label: File format
+      options:
+        - JSON
+        - YAML
+        - .strings
+        - .xcstrings
+        - .po
+        - ARB
+        - Android XML
+        - CSV
+        - XLIFF
+        - .properties
+        - .resx
+        - Fluent (.ftl)
+        - Markdown / MDX
+        - Not format-specific
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The exact command or workflow step, and a minimal source file if you can share one.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+      description: Output, error message, exit code.
+      render: text
+    validations:
+      required: true

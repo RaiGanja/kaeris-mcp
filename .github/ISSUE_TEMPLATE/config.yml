@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Discussions
+    url: https://github.com/kaeris-io/kaeris-cli/discussions
+    about: Ideas, show and tell, and open-ended questions for all KAERIS tools.
+  - name: Documentation
+    url: https://kaeris.dev/docs
+    about: Setup, flags and CI recipes.
+  - name: Security report
+    url: https://github.com/kaeris-io/kaeris-mcp/security/advisories/new
+    about: Report a vulnerability privately. Or email support@kaeris.dev.
