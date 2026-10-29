@@ -8,13 +8,13 @@
     "source": "github"
   },
   "websiteUrl": "https://kaeris.dev/mcp-localization.html",
-  "version": "0.2.16",
+  "version": "0.2.17",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "kaeris-mcp",
-      "version": "0.2.16",
+      "version": "0.2.17",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"

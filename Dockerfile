@@ -18,9 +18,10 @@ FROM python:3.12-slim
 # Deps first: this layer only rebuilds when the dependency set changes, not on
 # every source edit. No compiler needed — both packages are pure Python.
 # The install below is --no-deps, so THIS line decides the versions in the image.
-# kaeris>=0.2.31 carries the array-aware delta and the warning split the server relies on; mcp>=1.2,<3 covers
+# kaeris>=0.2.31 carries the array-aware delta and the warning split the server relies on; 0.2.39 is the CLI whose
+# `check` verdict kaeris_status mirrors, so that is the floor. mcp>=1.2,<3 covers
 # both SDK generations (the import falls back to 2.x's new location).
-RUN pip install --no-cache-dir "kaeris>=0.2.31" "mcp>=1.2,<3"
+RUN pip install --no-cache-dir "kaeris>=0.2.39" "mcp>=1.2,<3"
 
 WORKDIR /src
 COPY pyproject.toml README.md ./
